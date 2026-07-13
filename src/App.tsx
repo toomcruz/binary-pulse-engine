@@ -2435,10 +2435,10 @@ export default function App() {
               <div className="flex flex-col gap-1.5 pt-0.5">
                 <div className="flex justify-between text-[9px] font-mono">
                   <span className="text-emerald-400 font-bold flex items-center gap-1">
-                    �� Compra: {liveDiagnostics.buyerSentiment}%
+                    �� Compra: {formatPercent(liveDiagnostics.buyerSentiment)}
                   </span>
                   <span className="text-rose-400 font-bold flex items-center gap-1">
-                    Venda: {liveDiagnostics.sellerSentiment}% ��
+                    Venda: {formatPercent(liveDiagnostics.sellerSentiment)} ��
                   </span>
                 </div>
                 
@@ -2446,11 +2446,11 @@ export default function App() {
                 <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden flex border border-slate-800/50">
                   <div 
                     className="h-full bg-emerald-500 transition-all duration-500 shadow-[inset_-2px_0_4px_rgba(0,0,0,0.3)]"
-                    style={{ width: `${liveDiagnostics.buyerSentiment}%` }}
+                    style={{ width: `${clampPercent(liveDiagnostics.buyerSentiment)}%` }}
                   />
                   <div 
                     className="h-full bg-rose-500 transition-all duration-500"
-                    style={{ width: `${liveDiagnostics.sellerSentiment}%` }}
+                    style={{ width: `${clampPercent(liveDiagnostics.sellerSentiment)}%` }}
                   />
                 </div>
                 
