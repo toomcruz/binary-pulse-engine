@@ -48,7 +48,7 @@ export interface MarketDataHealth {
   dataAgeMs: number | null;
   isStaleData: boolean;
   isSyntheticData: boolean;
-  connectionStatus: "CONNECTED" | "CONNECTING" | "DISCONNECTED" | "STALE" | "ERROR" | "NOT_CONFIGURED";
+  connectionStatus: "CONNECTED" | "CONNECTING" | "DISCONNECTED" | "STALE" | "ERROR" | "NOT_CONFIGURED" | "UNAVAILABLE" | "RATE_LIMITED";
   feedMode?: "stream" | "rest_polling";
   error?: string;
   configured?: boolean;
