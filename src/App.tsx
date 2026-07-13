@@ -39,6 +39,7 @@ import {
 import TradingChart from "./components/TradingChart";
 import { Candle, AISignal, Trade, AssetConfig, StrategyType, StrategyCatalog } from "./types";
 import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPercent, formatPrice, formatInteger } from "./lib/format";
+import { buildBackstageReplayPayload, formatReplayEconomicMetric, translateEconomicStatus, type ReplayEconomicMetrics } from "./lib/backstageEconomics";
 import { apiRequest, ApiRequestError, normalizeApiError, type ApiErrorDetails } from "./lib/apiClient";
 import { ApiErrorBanner } from "./components/ApiErrorBanner";
 
@@ -250,6 +251,15 @@ export default function App() {
   const [isBackstageRunning, setIsBackstageRunning] = useState(false);
   const [backstageStatusOverride, setBackstageStatusOverride] = useState<string | null>(null);
   const [backstageError, setBackstageError] = useState<string | null>(null);
+  const [backstagePayoutPercent, setBackstagePayoutPercent] = useState("");
+  const [backstageEconomicMetrics, setBackstageEconomicMetrics] = useState<ReplayEconomicMetrics | null>(() => {
+    try {
+      const saved = localStorage.getItem("backstage_economic_metrics");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
 
   const [scannerResults, setScannerResults] = useState<any[]>(() => {
     try {
@@ -1676,12 +1686,13 @@ export default function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
+        body: JSON.stringify(buildBackstageReplayPayload({
           asset: selectedAsset.symbol,
           timeframe: timeframe,
           strategy,
-          precisionLevel
-        })
+          precisionLevel,
+          payoutPercentInput: backstagePayoutPercent
+        }))
       });
 
       if (!response.ok) {
@@ -1699,7 +1710,27 @@ export default function App() {
         setBackstageReplaySignals(data.results);
         localStorage.setItem("backstage_replay_results", JSON.stringify(data.results));
       }
+
+      const economicMetrics: ReplayEconomicMetrics = {
+        economicMetricsAvailable: data.economicMetricsAvailable === true,
+        economicStatus: data.economicStatus,
+        payout: data.payout ?? null,
+        breakEvenWinRate: data.breakEvenWinRate ?? null,
+        grossProfit: data.grossProfit ?? null,
+        grossLoss: data.grossLoss ?? null,
+        netProfit: data.netProfit ?? null,
+        roiPercent: data.roiPercent ?? null,
+        expectedValuePerTrade: data.expectedValuePerTrade ?? null,
+        decidedTrades: data.decidedTrades ?? data.signalsDecided ?? 0,
+        draws: data.draws ?? 0
+      };
+      setBackstageEconomicMetrics(economicMetrics);
+      localStorage.setItem("backstage_economic_metrics", JSON.stringify(economicMetrics));
     } catch (e: any) {
+      if (e?.message === "PAYOUT_PERCENT_OUT_OF_RANGE") {
+        setBackstageError("Payout da corretora deve estar entre 0% e 100%.");
+        return;
+      }
       setBackstageError(e.message || "Erro no Backstage Replay");
     } finally {
       setIsBackstageRunning(false);
@@ -2752,9 +2783,34 @@ export default function App() {
                 </span>
               </div>
               
+              <div className="mt-1 rounded-lg border border-slate-800/60 bg-slate-900/40 p-2">
+                <label className="flex items-center justify-between gap-2 text-[9px] font-bold uppercase tracking-wide text-slate-400">
+                  <span>Payout da corretora</span>
+                  <span className="font-mono text-slate-500">Ex.: 80%</span>
+                </label>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={backstagePayoutPercent}
+                    onChange={(event) => setBackstagePayoutPercent(event.target.value)}
+                    placeholder="80"
+                    className="w-full rounded bg-slate-950/80 border border-slate-800 px-2 py-1 text-[10px] font-mono text-slate-100 outline-none focus:border-indigo-500"
+                    aria-label="Payout da corretora em porcentagem"
+                  />
+                  <span className="text-[10px] font-black text-slate-500">%</span>
+                </div>
+                <p className="mt-1 text-[8px] leading-tight text-slate-500">
+                  Opcional. Se ficar vazio, o replay não envia payout e não calcula resultado econômico.
+                </p>
+              </div>
+
               <div className="flex justify-between items-end mt-1">
                 <div>
-                  <span className="text-[10px] text-slate-500 block leading-none">Progresso</span>
+                  <span className="text-[10px] text-slate-500 block leading-none">Assertividade direcional</span>
                   <span className="text-base font-black font-mono text-slate-200">
                     {backstageStatus.currentSignals} <span className="text-[9px] text-slate-500 font-normal">/ {backstageStatus.requiredSignals} sinais</span>
                   </span>
@@ -2783,6 +2839,9 @@ export default function App() {
               </div>
               
               <div className="flex flex-col gap-1 mt-1 bg-slate-900/50 p-2 rounded text-[9px] text-slate-400">
+                <div className="text-[8px] font-black uppercase tracking-wide text-indigo-300">
+                  Assertividade direcional
+                </div>
                 <div className="flex justify-between">
                   <span>Sinais Decididos (W/L):</span>
                   <span className="text-slate-200">{backstageStatus.wins} W / {backstageStatus.losses} L</span>
@@ -2799,6 +2858,37 @@ export default function App() {
                     {Object.entries(backstageStatus.byRegime).sort((a, b) => (b[1] as any).total - (a[1] as any).total)[0]?.[0] || "N/A"}
                   </span>
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-1 mt-1 bg-slate-900/50 p-2 rounded text-[9px] text-slate-400">
+                <div className="text-[8px] font-black uppercase tracking-wide text-emerald-300">
+                  Resultado econômico
+                </div>
+                {backstageEconomicMetrics?.economicMetricsAvailable ? (
+                  <>
+                    <div className="flex justify-between">
+                      <span>Status econômico:</span>
+                      <span className={`font-bold ${backstageEconomicMetrics.economicStatus === "ECONOMICALLY_PROFITABLE" ? "text-emerald-400" : "text-rose-400"}`}>
+                        {translateEconomicStatus(backstageEconomicMetrics.economicStatus)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                      <span>Payout:</span><strong className="text-right text-slate-200">{formatReplayEconomicMetric("payout", backstageEconomicMetrics.payout)}</strong>
+                      <span>Taxa equilíbrio:</span><strong className="text-right text-slate-200">{formatReplayEconomicMetric("breakEvenWinRate", backstageEconomicMetrics.breakEvenWinRate)}</strong>
+                      <span>Lucro bruto:</span><strong className="text-right text-emerald-400">{formatReplayEconomicMetric("grossProfit", backstageEconomicMetrics.grossProfit)}</strong>
+                      <span>Prejuízo bruto:</span><strong className="text-right text-rose-400">{formatReplayEconomicMetric("grossLoss", backstageEconomicMetrics.grossLoss)}</strong>
+                      <span>Lucro líquido:</span><strong className="text-right text-slate-200">{formatReplayEconomicMetric("netProfit", backstageEconomicMetrics.netProfit)}</strong>
+                      <span>ROI:</span><strong className="text-right text-slate-200">{formatReplayEconomicMetric("roiPercent", backstageEconomicMetrics.roiPercent)}</strong>
+                      <span>Valor esperado/op.:</span><strong className="text-right text-slate-200">{formatReplayEconomicMetric("expectedValuePerTrade", backstageEconomicMetrics.expectedValuePerTrade)}</strong>
+                      <span>Operações decididas:</span><strong className="text-right text-slate-200">{formatReplayEconomicMetric("decidedTrades", backstageEconomicMetrics.decidedTrades)}</strong>
+                      <span>DRAWs:</span><strong className="text-right text-slate-200">{formatReplayEconomicMetric("draws", backstageEconomicMetrics.draws)}</strong>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded border border-slate-800/70 bg-slate-950/40 p-2 text-[8.5px] leading-tight text-slate-500">
+                    {translateEconomicStatus(backstageEconomicMetrics?.economicStatus)}. Informe um payout para calcular lucro, ROI e valor esperado.
+                  </div>
+                )}
               </div>
 
               <div className="mt-2 flex gap-1.5">
