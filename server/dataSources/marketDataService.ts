@@ -3,7 +3,7 @@ import { getFastForexHealth } from "./fastForex/fastForexHealth";
 import { getCachedFastForexTick, getFastForexPrice } from "./fastForex/fastForexPrice";
 import { isFastForexConfigured } from "./fastForex/fastForexClient";
 
-let streamInitializationStarted = false;
+let fastForexSyncTimer: ReturnType<typeof setInterval> | null = null;
 
 async function syncAllFastForexPrices() {
   let symbolsStr = process.env.FASTFOREX_SYMBOLS_FOREX || "EUR/USD,GBP/USD,USD/JPY,EUR/GBP,AUD/USD,USD/CAD";
@@ -23,22 +23,32 @@ async function syncAllFastForexPrices() {
   }
 }
 
-export function initMarketDataService() {
-  if (streamInitializationStarted) return;
-  streamInitializationStarted = true;
+export function startFastForexSync() {
+  if (fastForexSyncTimer) return;
+  if (!isFastForexConfigured()) return;
 
-  if (isFastForexConfigured()) {
-    console.log("[MarketData] Initializing real-time FastForex price sync...");
+  console.log("[MarketData] Initializing real-time FastForex price sync...");
+  syncAllFastForexPrices().catch(() => {});
+  fastForexSyncTimer = setInterval(() => {
     syncAllFastForexPrices().catch(() => {});
-    // Polling every 15 seconds per batch
-    setInterval(() => {
-      syncAllFastForexPrices().catch(() => {});
-    }, 15000);
-  }
+  }, 15000);
+  // Do not keep the Node event loop alive on account of the polling timer alone
+  fastForexSyncTimer.unref?.();
+}
+
+export function stopFastForexSync() {
+  if (!fastForexSyncTimer) return;
+  clearInterval(fastForexSyncTimer);
+  fastForexSyncTimer = null;
+}
+
+// Backwards-compatible alias — existing server bootstrap keeps calling this.
+export function initMarketDataService() {
+  startFastForexSync();
 }
 
 export function ensureOandaStreamStarted() {
-  initMarketDataService();
+  startFastForexSync();
 }
 
 export function normalizeInstrumentName(inst: string): string {

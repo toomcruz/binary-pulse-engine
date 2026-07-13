@@ -32,9 +32,13 @@ export function runBackstageReplay({
 }): { results: BackstageReplaySignal[], trainSignals: number, datasetHash: string, configurationHash: string, resultsHash: string } {
   
   // 1. validar OHLC finito; 2. exigir high >= open/close/low; 3. exigir low <= open/close/high; 4. ordenar por timestamp; 5. deduplicar; 6. remover incompletos;
-  const uniqueCandles = new Map<number, Candle>();
+  function hasValidTimestamp(candle: Candle): candle is Candle & { timestamp: number } {
+    return typeof candle.timestamp === "number" && Number.isFinite(candle.timestamp);
+  }
+
+  const uniqueCandles = new Map<number, Candle & { timestamp: number }>();
   for (const c of candles) {
-    if (c && c.complete === true && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)) {
+    if (c && hasValidTimestamp(c) && c.complete === true && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)) {
       if (c.high >= c.open && c.high >= c.close && c.high >= c.low && c.low <= c.open && c.low <= c.close && c.low <= c.high) {
         uniqueCandles.set(c.timestamp, c);
       }

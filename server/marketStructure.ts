@@ -53,23 +53,30 @@ export function detectPivots(candles: Candle[], leftBars = 3, rightBars = 3): Pi
   
   for (let i = leftBars; i < candles.length - rightBars; i++) {
     const current = candles[i];
+    if (!current) {
+      continue;
+    }
     let isHigh = true;
     let isLow = true;
 
     for (let j = 1; j <= leftBars; j++) {
-      if (candles[i - j].high >= current.high) isHigh = false;
-      if (candles[i - j].low <= current.low) isLow = false;
+      const left = candles[i - j];
+      if (!left) { isHigh = false; isLow = false; continue; }
+      if (left.high >= current.high) isHigh = false;
+      if (left.low <= current.low) isLow = false;
     }
     for (let j = 1; j <= rightBars; j++) {
-      if (candles[i + j].high >= current.high) isHigh = false;
-      if (candles[i + j].low <= current.low) isLow = false;
+      const right = candles[i + j];
+      if (!right) { isHigh = false; isLow = false; continue; }
+      if (right.high >= current.high) isHigh = false;
+      if (right.low <= current.low) isLow = false;
     }
 
     if (isHigh) {
-      pivots.push({ type: "HIGH", price: current.high, index: i, timestamp: current.timestamp });
+      pivots.push({ type: "HIGH", price: current.high, index: i, timestamp: current.timestamp as number });
     }
     if (isLow) {
-      pivots.push({ type: "LOW", price: current.low, index: i, timestamp: current.timestamp });
+      pivots.push({ type: "LOW", price: current.low, index: i, timestamp: current.timestamp as number });
     }
   }
   

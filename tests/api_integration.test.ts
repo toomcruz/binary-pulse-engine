@@ -3,6 +3,8 @@ process.env.TEST_ENV = "true";
 process.env.FASTFOREX_API_KEY = "mock_test_key";
 process.env.FASTFOREX_SYMBOLS_FOREX = "EUR/USD,GBP/USD";
 process.env.FASTFOREX_SYMBOLS_CRYPTO = "BTC/USD";
+// Force Gemini formatter to take the deterministic fallback path (no real API calls in tests).
+process.env.GEMINI_API_KEY = "";
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -60,7 +62,7 @@ function setupMockFetch() {
     }
 
     if (urlStr.includes("/fx/ohlc/time-series") || urlStr.includes("/candles") || urlStr.includes("/time-series") || urlStr.includes("/klines")) {
-      const results = [];
+      const results: Array<{ d: number; o: number; h: number; l: number; c: number; v: number }> = [];
       const now = Math.floor(Date.now() / 300000) * 300000;
       // Generate enough candles to pass the checks
       // FastForex mapper expects { d, o, h, l, c, v }
@@ -205,6 +207,8 @@ test("API Integration Tests", async (t) => {
     assert.strictEqual(errData.error, "INVALID_STRATEGY_MODE");
   });
 
-  server.close();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  const { stopFastForexSync } = await import('../server/dataSources/marketDataService');
+  stopFastForexSync();
   restoreFetch();
 });
