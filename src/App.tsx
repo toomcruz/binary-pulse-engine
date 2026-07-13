@@ -4372,6 +4372,23 @@ export default function App() {
               </div>
             </div>
 
+            {sweepGlobalError && (
+              <div className="mb-4">
+                <ApiErrorBanner error={sweepGlobalError} onDismiss={() => setSweepGlobalError(null)} />
+              </div>
+            )}
+
+            {Object.keys(sweepAssetErrors).length > 0 && (
+              <div className="mb-4 flex flex-col gap-2">
+                {Object.entries(sweepAssetErrors).map(([symbol, detail]) => (
+                  <div key={symbol}>
+                    <div className="text-[10px] uppercase tracking-wider text-rose-300 font-bold mb-1">{symbol}</div>
+                    <ApiErrorBanner error={detail} />
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Progress Section */}
             {isSweepScanning && (
               <div className="mb-4 bg-slate-950/60 border border-slate-800 p-4 rounded-xl flex flex-col gap-3">
