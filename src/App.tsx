@@ -191,6 +191,9 @@ export default function App() {
   const [isContinuousAnalysis, setIsContinuousAnalysis] = useState<boolean>(true);
   const [isBackgroundAnalyzing, setIsBackgroundAnalyzing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [signalApiError, setSignalApiError] = useState<ApiErrorDetails | null>(null);
+  const [sweepGlobalError, setSweepGlobalError] = useState<ApiErrorDetails | null>(null);
+  const [sweepAssetErrors, setSweepAssetErrors] = useState<Record<string, ApiErrorDetails>>({});
 
 
   const [fastForexHealth, setFastForexHealth] = useState<any>(null);
