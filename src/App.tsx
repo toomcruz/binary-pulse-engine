@@ -2660,18 +2660,18 @@ export default function App() {
                 <span className="text-[9px] text-slate-400 uppercase tracking-wide">Confiança Média</span>
                 <div className="flex items-baseline gap-1.5 mt-1.5">
                   <span className={`text-xl font-extrabold font-mono ${
-                    stats.avgConfidence >= 90 ? "text-emerald-400" : stats.avgConfidence >= 75 ? "text-amber-400" : "text-rose-400"
+                    (stats.avgConfidence ?? 0) >= 90 ? "text-emerald-400" : (stats.avgConfidence ?? 0) >= 75 ? "text-amber-400" : "text-rose-400"
                   }`}>
-                    {stats.avgConfidence}%
+                    {formatPercent(stats.avgConfidence)}
                   </span>
                   <span className="text-[9px] text-slate-500 font-medium">filtrado</span>
                 </div>
                 <div className="w-full bg-slate-800/50 h-1.5 rounded-full overflow-hidden mt-2">
                   <div 
                     className={`h-full transition-all duration-500 ${
-                      stats.avgConfidence >= 90 ? "bg-emerald-500" : stats.avgConfidence >= 75 ? "bg-amber-500" : "bg-rose-500"
+                      (stats.avgConfidence ?? 0) >= 90 ? "bg-emerald-500" : (stats.avgConfidence ?? 0) >= 75 ? "bg-amber-500" : "bg-rose-500"
                     }`}
-                    style={{ width: `${stats.avgConfidence}%` }}
+                    style={{ width: `${clampPercent(stats.avgConfidence)}%` }}
                   />
                 </div>
               </div>
