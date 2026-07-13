@@ -2,7 +2,7 @@ import { TriggerEvaluation, MarketFeatures, RegimeLabel } from '../types';
 
 export function evaluateLiquiditySweep(features: MarketFeatures, regime: RegimeLabel): TriggerEvaluation {
   const { candles, currentPrice } = features;
-  if (candles.length < 20) {
+  if (!candles || candles.length < 20) {
     return { signal: 'NEUTRAL', strategy: 'liquiditySweep', technicalScore: 0, reasons: ['Histórico insuficiente para Liquidity Sweep.'] };
   }
 

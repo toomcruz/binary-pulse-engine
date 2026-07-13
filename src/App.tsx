@@ -529,7 +529,7 @@ export default function App() {
       const validatedStrategies = assetStrategies.filter(s => s.winRate !== null);
       if (validatedStrategies.length > 0) {
         const bestStrategy = validatedStrategies.reduce((prev, current) => 
-          (current.winRate > prev.winRate) ? current : prev
+          ((current.winRate ?? 0) > (prev.winRate ?? 0)) ? current : prev
         , validatedStrategies[0]);
         
         if (bestStrategy && bestStrategy.strategy !== strategy) {
@@ -1914,7 +1914,7 @@ export default function App() {
       const assetStrategies = strategyCatalogs[asset.symbol] || [];
       const validatedStrategies = assetStrategies.filter(s => s.winRate !== null);
       const bestStrategy = validatedStrategies.length > 0 
-        ? validatedStrategies.reduce((prev, current) => (current.winRate > prev.winRate) ? current : prev, validatedStrategies[0])
+        ? validatedStrategies.reduce((prev, current) => ((current.winRate ?? 0) > (prev.winRate ?? 0)) ? current : prev, validatedStrategies[0])
         : { strategy: 'reversion', name: 'MHI / Retração', winRate: null };
 
       try {
@@ -2122,10 +2122,10 @@ export default function App() {
     
     // Average confidence of generated directional signals
     const directionalSignals = list.filter(s => s.signal !== "NEUTRAL");
-    const sumConfidence = directionalSignals.reduce((acc, s) => acc + s.technicalScore, 0);
+    const sumConfidence = directionalSignals.reduce((acc, s) => acc + (s.technicalScore ?? 0), 0);
     const avgConfidence = directionalSignals.length > 0 
       ? Math.round(sumConfidence / directionalSignals.length) 
-      : (list.length > 0 ? Math.round(list.reduce((acc, s) => acc + s.technicalScore, 0) / list.length) : 0);
+      : (list.length > 0 ? Math.round(list.reduce((acc, s) => acc + (s.technicalScore ?? 0), 0) / list.length) : 0);
 
     return { 
       total,
@@ -2446,9 +2446,9 @@ export default function App() {
                 </div>
                 
                 <p className="text-[8px] text-slate-500 leading-normal mt-0.5">
-                  {liveDiagnostics.buyerSentiment >= 58 ? (
+                  {(liveDiagnostics.buyerSentiment ?? 50) >= 58 ? (
                     <span><strong>Touros Dominantes:</strong> Maioria dos indicadores técnicos (RSI, Médias e MACD) apontam para forte momentum comprador de curto prazo no livro de ofertas.</span>
-                  ) : liveDiagnostics.buyerSentiment <= 42 ? (
+                  ) : (liveDiagnostics.buyerSentiment ?? 50) <= 42 ? (
                     <span><strong>Ursos Dominantes:</strong> Forte fluxo vendedor detectado com rompimento descendente de médias rápidas e exaustão no suporte institucional.</span>
                   ) : (
                     <span><strong>Equilíbrio Neutro:</strong> Consolidação de preços sem tendência definida. Recomendável aguardar rompimento das bandas de Bollinger antes da operação.</span>
@@ -2864,8 +2864,8 @@ export default function App() {
                 <div className="mt-1 flex flex-col gap-1.5 max-h-[220px] overflow-y-auto pr-1">
                   {scannerResults
                     .sort((a, b) => {
-                      const statusOrder = { "BEST_SETUP": 0, "ACCEPTABLE_SETUP": 1, "REJECTED_SETUP": 2, "INSUFFICIENT_HISTORY": 3 };
-                      return (statusOrder[a.status] || 0) - (statusOrder[b.status] || 0) || b.winRate - a.winRate;
+                      const statusOrder: Record<string, number> = { "BEST_SETUP": 0, "ACCEPTABLE_SETUP": 1, "REJECTED_SETUP": 2, "INSUFFICIENT_HISTORY": 3 };
+                      return (statusOrder[a.status] ?? 0) - (statusOrder[b.status] ?? 0) || b.winRate - a.winRate;
                     })
                     .slice(0, 10) // show top 10
                     .map((item, idx) => (
@@ -3422,7 +3422,7 @@ export default function App() {
                             <span className="text-[9px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2.5 py-1 rounded-lg font-black uppercase tracking-wider">
                               Risco: Crítico (Bloqueado)
                             </span>
-                          ) : activeSignal.technicalScore >= 93 ? (
+                          ) : (activeSignal.technicalScore ?? 0) >= 93 ? (
                             <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-black uppercase tracking-wider">
                               Risco: Baixo (Confluente)
                             </span>
@@ -3701,13 +3701,13 @@ export default function App() {
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 uppercase">Taxa de Acerto Recente</span>
                         <span className={`text-sm font-black ${
-                          activeSignal.historicalPerformance.winRate >= 75 
+                          (activeSignal.historicalPerformance.winRate ?? 0) >= 75 
                             ? 'text-emerald-400' 
-                            : activeSignal.historicalPerformance.winRate >= 60 
+                            : (activeSignal.historicalPerformance.winRate ?? 0) >= 60 
                             ? 'text-amber-400' 
                             : 'text-rose-400'
                         }`}>
-                          {activeSignal.historicalPerformance.winRate}%
+                          {activeSignal.historicalPerformance.winRate ?? '—'}%
                         </span>
                       </div>
                       <div className="flex flex-col gap-1">
@@ -3905,8 +3905,8 @@ export default function App() {
               <TradingChart 
                 candles={candles} 
                 currentPrice={currentPrice}
-                supportLevel={activeSignal?.keyLevels?.support}
-                resistanceLevel={activeSignal?.keyLevels?.resistance}
+                supportLevel={activeSignal?.keyLevels?.support ?? undefined}
+                resistanceLevel={activeSignal?.keyLevels?.resistance ?? undefined}
                 autoPilotActive={autoPilot}
                 isScanning={isAutopilotScanning}
               />

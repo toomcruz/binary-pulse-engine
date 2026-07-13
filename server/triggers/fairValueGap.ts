@@ -2,7 +2,7 @@ import { TriggerEvaluation, MarketFeatures, RegimeLabel } from '../types';
 
 export function evaluateFairValueGap(features: MarketFeatures, regime: RegimeLabel): TriggerEvaluation {
   const { candles, currentPrice } = features;
-  if (candles.length < 10) {
+  if (!candles || candles.length < 10) {
     return { signal: 'NEUTRAL', strategy: 'fvg', technicalScore: 0, reasons: ['Histórico insuficiente para FVG.'] };
   }
 

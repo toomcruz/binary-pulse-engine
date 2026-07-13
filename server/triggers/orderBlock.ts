@@ -2,7 +2,7 @@ import { TriggerEvaluation, MarketFeatures, RegimeLabel } from '../types';
 
 export function evaluateOrderBlock(features: MarketFeatures, regime: RegimeLabel): TriggerEvaluation {
   const { candles, currentPrice } = features;
-  if (candles.length < 15) {
+  if (!candles || candles.length < 15) {
     return { signal: 'NEUTRAL', strategy: 'orderBlock', technicalScore: 0, reasons: ['Histórico insuficiente para Order Block.'] };
   }
 
