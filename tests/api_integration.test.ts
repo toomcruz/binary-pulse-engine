@@ -107,6 +107,38 @@ function fetchJson(url: string, init?: RequestInit): Promise<{ response: Respons
   }));
 }
 
+
+function createBackstageScanCandles(count = 160): any[] {
+  const now = Math.floor(Date.now() / 60000) * 60000;
+  return Array.from({ length: count }, (_, i) => {
+    const timestamp = now - (count - i + 1) * 60000;
+    const base = 1.08 + i * 0.00001;
+    return {
+      time: new Date(timestamp).toISOString(),
+      timestamp,
+      open: base,
+      high: base + 0.0005,
+      low: base - 0.0005,
+      close: base + (i % 2 === 0 ? 0.0001 : -0.0001),
+      volume: 1000,
+      complete: true,
+      source: "test",
+      provider: "test",
+      instrument: "EUR/USD",
+      granularity: "M1",
+      priceType: "mid"
+    };
+  });
+}
+
+async function postBackstageScanAll(baseUrl: string) {
+  return fetchJson(`${baseUrl}/api/backstage-scan-all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+}
+
 function createNeverRespondingProvider(): MarketDataProvider {
   const deterministic = createDeterministicTestMarketDataProvider();
   return {
@@ -141,7 +173,7 @@ test("API Integration Tests", async (t) => {
   setupMockFetch();
 
   // Import app dynamically after setting environment variables
-  const { app, setAnalyzeMarketDataProvider } = await import('../server');
+  const { app, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState } = await import('../server');
   const { stopFastForexSync } = await import('../server/dataSources/marketDataService');
   setAnalyzeMarketDataProvider(createDeterministicTestMarketDataProvider());
   
@@ -153,6 +185,8 @@ test("API Integration Tests", async (t) => {
   const baseUrl = `http://127.0.0.1:${port}`;
 
   t.after(async () => {
+    resetBackstageScanAllState();
+    delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
     setAnalyzeMarketDataProvider(null);
     stopFastForexSync();
     restoreFetch();
@@ -381,4 +415,134 @@ test("API Integration Tests", async (t) => {
     assert.ok(Array.isArray(data.reasoning));
     assert.ok(durationMs < 2000, `Gemini-absent deterministic response took ${durationMs}ms`);
   });
+
+  await t.test("9. POST /api/backstage-scan-all - normal execution", async () => {
+    resetBackstageScanAllState();
+    setBackstageScanAllCandlesFetcher(async () => ({
+      candles: createBackstageScanCandles(),
+      metrics: {
+        batchesFetched: 1,
+        requestedCandles: 2000,
+        uniqueCandlesReceived: 160,
+        duplicateCandlesDiscarded: 0,
+        oldestTimestamp: null,
+        newestTimestamp: null
+      }
+    }));
+
+    const { response, data } = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(response.status, 200);
+    assert.ok(Array.isArray(data.setups));
+    assert.strictEqual(typeof data.stats.bestStrategy, "string");
+    resetBackstageScanAllState();
+  });
+
+  await t.test("10. POST /api/backstage-scan-all - rejects simultaneous scans with 409", async () => {
+    resetBackstageScanAllState();
+    let releaseFirstFetch!: () => void;
+    let fetchCalls = 0;
+    const firstFetchStarted = new Promise<void>((resolve) => {
+      setBackstageScanAllCandlesFetcher(async () => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) {
+          resolve();
+          await new Promise<void>((release) => { releaseFirstFetch = release; });
+        }
+        return {
+          candles: createBackstageScanCandles(),
+          metrics: {
+            batchesFetched: 1,
+            requestedCandles: 2000,
+            uniqueCandlesReceived: 160,
+            duplicateCandlesDiscarded: 0,
+            oldestTimestamp: null,
+            newestTimestamp: null
+          }
+        };
+      });
+    });
+
+    const firstRequest = postBackstageScanAll(baseUrl);
+    await firstFetchStarted;
+    const { response: conflictResponse, data: conflictData } = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(conflictResponse.status, 409);
+    assert.deepStrictEqual(conflictData, { error: "BACKSTAGE_SCAN_ALREADY_RUNNING" });
+
+    releaseFirstFetch();
+    const { response: firstResponse } = await firstRequest;
+    assert.strictEqual(firstResponse.status, 200);
+    resetBackstageScanAllState();
+  });
+
+  await t.test("11. POST /api/backstage-scan-all - releases lock after success", async () => {
+    resetBackstageScanAllState();
+    setBackstageScanAllCandlesFetcher(async () => ({
+      candles: createBackstageScanCandles(),
+      metrics: {
+        batchesFetched: 1,
+        requestedCandles: 2000,
+        uniqueCandlesReceived: 160,
+        duplicateCandlesDiscarded: 0,
+        oldestTimestamp: null,
+        newestTimestamp: null
+      }
+    }));
+
+    assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    resetBackstageScanAllState();
+  });
+
+  await t.test("12. POST /api/backstage-scan-all - releases lock after error", async () => {
+    resetBackstageScanAllState();
+    let calls = 0;
+    setBackstageScanAllCandlesFetcher(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("TEST_BACKSTAGE_SCAN_FAILURE");
+      return {
+        candles: createBackstageScanCandles(),
+        metrics: {
+          batchesFetched: 1,
+          requestedCandles: 2000,
+          uniqueCandlesReceived: 160,
+          duplicateCandlesDiscarded: 0,
+          oldestTimestamp: null,
+          newestTimestamp: null
+        }
+      };
+    });
+
+    const failed = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(failed.response.status, 500);
+    assert.strictEqual(failed.data.error, "TEST_BACKSTAGE_SCAN_FAILURE");
+    const recovered = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(recovered.response.status, 200);
+    resetBackstageScanAllState();
+  });
+
+  await t.test("13. POST /api/backstage-scan-all - global timeout releases lock", async () => {
+    resetBackstageScanAllState();
+    process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS = "25";
+    setBackstageScanAllCandlesFetcher(async () => new Promise(() => undefined));
+
+    const timedOut = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(timedOut.response.status, 504);
+    assert.strictEqual(timedOut.data.error, "BACKSTAGE_SCAN_TIMEOUT");
+
+    delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
+    setBackstageScanAllCandlesFetcher(async () => ({
+      candles: createBackstageScanCandles(),
+      metrics: {
+        batchesFetched: 1,
+        requestedCandles: 2000,
+        uniqueCandlesReceived: 160,
+        duplicateCandlesDiscarded: 0,
+        oldestTimestamp: null,
+        newestTimestamp: null
+      }
+    }));
+    assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    resetBackstageScanAllState();
+  });
+
 });
