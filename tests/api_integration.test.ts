@@ -520,14 +520,40 @@ test("API Integration Tests", async (t) => {
     resetBackstageScanAllState();
   });
 
-  await t.test("13. POST /api/backstage-scan-all - global timeout releases lock", async () => {
+  await t.test("13. POST /api/backstage-scan-all - timeout stops fetching additional assets", async () => {
     resetBackstageScanAllState();
     process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS = "25";
-    setBackstageScanAllCandlesFetcher(async () => new Promise(() => undefined));
+    let fetchCalls = 0;
+    let resolveCancellation!: () => void;
+    const cancellationFinished = new Promise<void>((resolve) => { resolveCancellation = resolve; });
+
+    setBackstageScanAllCandlesFetcher(async (_symbol, _timeframe, _targetCandles, signal) => {
+      fetchCalls += 1;
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      resolveCancellation();
+      return {
+        candles: createBackstageScanCandles(),
+        metrics: {
+          batchesFetched: 1,
+          requestedCandles: 2000,
+          uniqueCandlesReceived: 160,
+          duplicateCandlesDiscarded: 0,
+          oldestTimestamp: null,
+          newestTimestamp: null
+        }
+      };
+    });
 
     const timedOut = await postBackstageScanAll(baseUrl);
     assert.strictEqual(timedOut.response.status, 504);
     assert.strictEqual(timedOut.data.error, "BACKSTAGE_SCAN_TIMEOUT");
+    await cancellationFinished;
+
+    const callsAfterTimeout = fetchCalls;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.strictEqual(fetchCalls, callsAfterTimeout);
 
     delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
     setBackstageScanAllCandlesFetcher(async () => ({
@@ -541,6 +567,57 @@ test("API Integration Tests", async (t) => {
         newestTimestamp: null
       }
     }));
+    assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    resetBackstageScanAllState();
+  });
+
+  await t.test("14. POST /api/backstage-scan-all - keeps lock until cancelled scan finishes", async () => {
+    resetBackstageScanAllState();
+    process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS = "25";
+    let releaseCancelledWork!: () => void;
+    const cancelledWorkReleased = new Promise<void>((resolve) => { releaseCancelledWork = resolve; });
+
+    setBackstageScanAllCandlesFetcher(async (_symbol, _timeframe, _targetCandles, signal) => {
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      await cancelledWorkReleased;
+      return {
+        candles: createBackstageScanCandles(),
+        metrics: {
+          batchesFetched: 1,
+          requestedCandles: 2000,
+          uniqueCandlesReceived: 160,
+          duplicateCandlesDiscarded: 0,
+          oldestTimestamp: null,
+          newestTimestamp: null
+        }
+      };
+    });
+
+    const timedOut = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(timedOut.response.status, 504);
+    assert.strictEqual(timedOut.data.error, "BACKSTAGE_SCAN_TIMEOUT");
+
+    const stillLocked = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(stillLocked.response.status, 409);
+    assert.deepStrictEqual(stillLocked.data, { error: "BACKSTAGE_SCAN_ALREADY_RUNNING" });
+
+    delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
+    setBackstageScanAllCandlesFetcher(async () => ({
+      candles: createBackstageScanCandles(),
+      metrics: {
+        batchesFetched: 1,
+        requestedCandles: 2000,
+        uniqueCandlesReceived: 160,
+        duplicateCandlesDiscarded: 0,
+        oldestTimestamp: null,
+        newestTimestamp: null
+      }
+    }));
+    releaseCancelledWork();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
     assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
     resetBackstageScanAllState();
   });

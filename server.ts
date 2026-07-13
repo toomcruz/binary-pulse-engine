@@ -35,7 +35,12 @@ import { resetCalibrationSession } from "./server/calibration";
 
 const app = express();
 
-type BackstageCandlesFetcher = typeof getBackstageCandles;
+type BackstageCandlesFetcher = (
+  symbol: string,
+  timeframe: "M1" | "M5",
+  targetCandles?: number,
+  signal?: AbortSignal
+) => ReturnType<typeof getBackstageCandles>;
 
 let backstageScanAllRunning = false;
 let backstageCandlesFetcher: BackstageCandlesFetcher = getBackstageCandles;
@@ -63,17 +68,15 @@ function createBackstageScanAllTimeoutError(timeoutMs: number) {
   });
 }
 
-async function withBackstageScanAllTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
+function createBackstageScanAllAbortError() {
+  return Object.assign(new Error("Backstage scan cancelled"), {
+    code: "BACKSTAGE_SCAN_CANCELLED"
+  });
+}
 
-  try {
-    return await new Promise<T>((resolve, reject) => {
-      timer = setTimeout(() => reject(createBackstageScanAllTimeoutError(timeoutMs)), timeoutMs);
-      timer.unref?.();
-      operation.then(resolve, reject);
-    });
-  } finally {
-    if (timer) clearTimeout(timer);
+function throwIfBackstageScanAllAborted(signal: AbortSignal) {
+  if (signal.aborted) {
+    throw createBackstageScanAllAbortError();
   }
 }
 
@@ -601,7 +604,7 @@ app.post("/api/backstage-replay", async (req, res) => {
   }
 });
 
-async function runBackstageScanAll() {
+async function runBackstageScanAll(signal: AbortSignal) {
   const assets = ["EUR/USD", "GBP/USD", "USD/JPY", "EUR/GBP", "AUD/USD", "USD/CAD"];
     const timeframes = ["M1", "M5"];
     const strategies = ["reversion", "trend", "price_action", "breakout", "candle_flow", "order_block", "liquidity_sweep", "fvg"];
@@ -621,12 +624,17 @@ async function runBackstageScanAll() {
 
     // Loop through assets and timeframes
     for (const asset of assets) {
+      throwIfBackstageScanAllAborted(signal);
+
       for (const tf of timeframes) {
+        throwIfBackstageScanAllAborted(signal);
         const granularity = tf === "M1" ? "M1" : "M5";
         
         let candles = [];
         try {
-          const { candles: backCandles } = await backstageCandlesFetcher(asset, granularity, 2000);
+          throwIfBackstageScanAllAborted(signal);
+          const { candles: backCandles } = await backstageCandlesFetcher(asset, granularity, 2000, signal);
+          throwIfBackstageScanAllAborted(signal);
           candles = backCandles;
         } catch (err: any) {
           if (err?.message === "MARKET_CANDLES_UNAVAILABLE") {
@@ -636,9 +644,11 @@ async function runBackstageScanAll() {
         }
 
         if (!candles || candles.length < 37) continue;
+        throwIfBackstageScanAllAborted(signal);
         const completeCandles = candles.filter(c => c.complete);
 
         // Run backstage replay with "all" strategies
+        throwIfBackstageScanAllAborted(signal);
         resetCalibrationSession();
         const { results: allSignals } = runBackstageReplay({
           asset,
@@ -646,6 +656,7 @@ async function runBackstageScanAll() {
           candles: completeCandles,
           strategy: "all"
         });
+        throwIfBackstageScanAllAborted(signal);
 
         // Group signals by strategy
         for (const strat of strategies) {
@@ -751,20 +762,48 @@ app.post("/api/backstage-scan-all", async (_req, res) => {
 
   backstageScanAllRunning = true;
   const timeoutMs = getBackstageScanAllTimeoutMs();
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+
+  const scanPromise = runBackstageScanAll(controller.signal);
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(createBackstageScanAllTimeoutError(timeoutMs));
+    }, timeoutMs);
+    timer.unref?.();
+  });
 
   try {
-    const result = await withBackstageScanAllTimeout(runBackstageScanAll(), timeoutMs);
-    res.json(result);
+    const result = await Promise.race([scanPromise, timeoutPromise]);
+    if (!res.headersSent) {
+      res.json(result);
+    }
   } catch (error: any) {
     console.error("Error in /api/backstage-scan-all:", error);
     if (error?.code === "BACKSTAGE_SCAN_TIMEOUT") {
-      return res.status(504).json({
-        error: "BACKSTAGE_SCAN_TIMEOUT",
-        message: `Backstage scan exceeded ${timeoutMs}ms timeout`
-      });
+      if (!res.headersSent) {
+        res.status(504).json({
+          error: "BACKSTAGE_SCAN_TIMEOUT",
+          message: `Backstage scan exceeded ${timeoutMs}ms timeout`
+        });
+      }
+
+      try {
+        await scanPromise;
+      } catch (scanError: any) {
+        if (scanError?.code !== "BACKSTAGE_SCAN_CANCELLED") {
+          console.error("Error while cancelling /api/backstage-scan-all:", scanError);
+        }
+      }
+      return;
     }
-    res.status(500).json({ error: error.message || "INTERNAL_SERVER_ERROR" });
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || "INTERNAL_SERVER_ERROR" });
+    }
   } finally {
+    if (timer) clearTimeout(timer);
     backstageScanAllRunning = false;
   }
 });
