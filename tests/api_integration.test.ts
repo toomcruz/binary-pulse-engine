@@ -186,6 +186,64 @@ test("API Integration Tests", async (t) => {
     assert.ok(Array.isArray(successData.candles));
   });
 
+  await t.test("3. POST /api/backstage-replay - input validation", async () => {
+    const basePayload = {
+      asset: "EUR/USD",
+      timeframe: "M1",
+      strategy: "reversion",
+      precisionLevel: "normal",
+      payout: 0.88
+    };
+
+    const invalidTimeframeRes = await fetch(`${baseUrl}/api/backstage-replay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...basePayload, timeframe: "M15" })
+    });
+    assert.strictEqual(invalidTimeframeRes.status, 400);
+    assert.strictEqual((await invalidTimeframeRes.json()).error, "INVALID_TIMEFRAME");
+
+    const invalidAssetRes = await fetch(`${baseUrl}/api/backstage-replay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...basePayload, asset: "DOGE/USD" })
+    });
+    assert.strictEqual(invalidAssetRes.status, 400);
+    assert.strictEqual((await invalidAssetRes.json()).error, "INVALID_ASSET");
+
+    const invalidStrategyRes = await fetch(`${baseUrl}/api/backstage-replay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...basePayload, strategy: "martingale" })
+    });
+    assert.strictEqual(invalidStrategyRes.status, 400);
+    assert.strictEqual((await invalidStrategyRes.json()).error, "INVALID_STRATEGY");
+
+    const invalidPrecisionRes = await fetch(`${baseUrl}/api/backstage-replay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...basePayload, precisionLevel: "turbo" })
+    });
+    assert.strictEqual(invalidPrecisionRes.status, 400);
+    assert.strictEqual((await invalidPrecisionRes.json()).error, "INVALID_PRECISION_LEVEL");
+
+    const validAliasRes = await fetch(`${baseUrl}/api/backstage-replay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asset: { symbol: "eur/usd" },
+        timeframe: "1min",
+        strategy: "auto",
+        precisionLevel: "ELITE",
+        payout: 0.88
+      })
+    });
+    assert.strictEqual(validAliasRes.status, 200);
+    const validAliasData = await validAliasRes.json();
+    assert.ok(["BACKSTAGE_TESTING", "BACKSTAGE_VALIDATED", "BACKSTAGE_REJECTED"].includes(validAliasData.status));
+    assert.strictEqual(validAliasData.economicMetricsAvailable, true);
+  });
+
   await t.test("3. POST /api/analyze-market - executionMode validation", async () => {
     // Invalid executionMode should return 400
     const errRes = await fetch(`${baseUrl}/api/analyze-market`, {
