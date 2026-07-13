@@ -4374,14 +4374,14 @@ export default function App() {
               <div className="mb-4 bg-slate-950/60 border border-slate-800 p-4 rounded-xl flex flex-col gap-3">
                 <div className="flex items-center justify-between text-xs font-bold font-mono">
                   <span className="text-slate-400 uppercase tracking-wider">Progresso da Varredura:</span>
-                  <span className="text-emerald-400">{sweepProgress}%</span>
+                  <span className="text-emerald-400">{formatPercent(sweepProgress)}</span>
                 </div>
                 
                 {/* Progress bar wrapper */}
                 <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden relative border border-slate-800">
                   <motion.div 
                     className="h-full bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-500 rounded-full"
-                    style={{ width: `${sweepProgress}%` }}
+                    style={{ width: `${clampPercent(sweepProgress)}%` }}
                     layout
                   />
                 </div>
