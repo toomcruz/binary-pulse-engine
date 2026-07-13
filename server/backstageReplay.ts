@@ -17,6 +17,23 @@ const STRATEGY_MAP: Record<string, string> = {
   fvg: "fairValueGap" // Wait, fvg or fairValueGap? Let's check engine triggers.
 };
 
+export interface InvalidExpiryGapEvent {
+  timestamp: string;
+  entryTimestamp: string;
+  asset: string;
+  timeframe: string;
+  strategy: string;
+  signal: "CALL" | "PUT";
+  phase: "train" | "validation";
+  reason: "INVALID_EXPIRY_GAP";
+  expectedMs: number;
+  actualMs: number;
+}
+
+export function getExpectedExpiryMs(timeframe: string): number {
+  return timeframe === "M5" ? 300000 : 60000;
+}
+
 export function runBackstageReplay({
   asset,
   timeframe,
@@ -29,7 +46,7 @@ export function runBackstageReplay({
   candles: Candle[];
   strategy: string;
   precisionLevel?: string;
-}): { results: BackstageReplaySignal[], trainSignals: number, datasetHash: string, configurationHash: string, resultsHash: string } {
+}): { results: BackstageReplaySignal[], trainSignals: number, invalidExpiryGaps: number, invalidExpiryGapEvents: InvalidExpiryGapEvent[], datasetHash: string, configurationHash: string, resultsHash: string } {
   
   // 1. validar OHLC finito; 2. exigir high >= open/close/low; 3. exigir low <= open/close/high; 4. ordenar por timestamp; 5. deduplicar; 6. remover incompletos;
   function hasValidTimestamp(candle: Candle): candle is Candle & { timestamp: number } {
@@ -58,6 +75,7 @@ export function runBackstageReplay({
   const allEnriched = populateIndicators([...validCandles]);
 
   const results: BackstageReplaySignal[] = [];
+  const invalidExpiryGapEvents: InvalidExpiryGapEvent[] = [];
   let trainSignalsCount = 0;
   
   // MIN_LOOKBACK is needed for indicator calculation
@@ -121,9 +139,34 @@ export function runBackstageReplay({
     const expectedStrategy = STRATEGY_MAP[strategy] || strategy;
     if (strategy && strategy !== "all" && strategy !== "auto" && decision.strategy !== expectedStrategy) continue;
 
+    const expectedExpiryMs = getExpectedExpiryMs(timeframe);
+    const actualExpiryMs = entryCandle.timestamp - currentCandle.timestamp;
+    if (actualExpiryMs !== expectedExpiryMs) {
+      invalidExpiryGapEvents.push({
+        timestamp: currentCandle.time
+          ? new Date(currentCandle.time).toISOString()
+          : `unknown-date-${i}`,
+        entryTimestamp: entryCandle.time
+          ? new Date(entryCandle.time).toISOString()
+          : `unknown-entry-date-${i + 1}`,
+        asset,
+        timeframe,
+        strategy: decision.strategy,
+        signal: decision.signal,
+        phase: isTrainPhase ? "train" : "validation",
+        reason: "INVALID_EXPIRY_GAP",
+        expectedMs: expectedExpiryMs,
+        actualMs: actualExpiryMs
+      });
+      continue;
+    }
 
     const entryPrice = entryCandle.open;
     const exitPrice = exitCandle.close;
+    const entryTimestamp = entryCandle.time
+      ? new Date(entryCandle.time).toISOString()
+      : new Date(entryCandle.timestamp).toISOString();
+    const expiryTimestamp = entryTimestamp;
 
     let result: "WIN" | "LOSS" | "DRAW" = "DRAW";
     if (decision.signal === "CALL") {
@@ -160,10 +203,13 @@ export function runBackstageReplay({
         technicalScore: decision.technicalScore,
         calibratedProbability: decision.calibratedProbability,
             calibrationAvailable: decision.calibrationAvailable,
+        sampleSize: decision.sampleSize,
         reliabilityScore: decision.reliabilityScore,
         regime: decision.regime,
         entryPrice,
+        entryTimestamp,
         exitPrice,
+        expiryTimestamp,
         result,
         reason: decision.reasons || [],
       });
@@ -190,10 +236,12 @@ export function runBackstageReplay({
     signal: r.signal,
     entryPrice: r.entryPrice,
     exitPrice: r.exitPrice,
+    entryTimestamp: r.entryTimestamp,
+    expiryTimestamp: r.expiryTimestamp,
     result: r.result
   }));
   const resultsHash = crypto.createHash('sha256').update(JSON.stringify(resultsHashData)).digest('hex').substring(0, 16);
   
-  return { results, trainSignals: trainSignalsCount, datasetHash, configurationHash, resultsHash };
+  return { results, trainSignals: trainSignalsCount, invalidExpiryGaps: invalidExpiryGapEvents.length, invalidExpiryGapEvents, datasetHash, configurationHash, resultsHash };
 
 }
