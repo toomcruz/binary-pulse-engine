@@ -22,6 +22,10 @@ function getAiClient(): GoogleGenAI {
 }
 
 export async function formatDecisionWithGemini(decision: any): Promise<string[]> {
+  if (!process.env.GEMINI_API_KEY) {
+    return fallbackFormatter(decision);
+  }
+
   try {
     const ai = getAiClient();
     
@@ -132,7 +136,8 @@ function fallbackFormatter(decision: any): string[] {
     lines.push(`MOTIVO DO BLOQUEIO: ${decision.blockReasons.join(" | ")}`);
   }
   if (decision.gateStatus === "BLOCKED") {
-    lines.push(`INTEGRIDADE BLOQUEADA: ${decision.reasons.join(" | ")}`);
+    const integrityReasons = Array.isArray(decision.reasons) ? decision.reasons : [];
+    lines.push(`INTEGRIDADE BLOQUEADA: ${integrityReasons.join(" | ")}`);
   }
   
   return lines;

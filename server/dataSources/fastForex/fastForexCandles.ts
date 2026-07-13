@@ -1,5 +1,6 @@
 import { MarketCandle } from "../dataSourceTypes";
 import { FASTFOREX_API_KEY, FASTFOREX_BASE_URL, isFastForexConfigured, normalizeSymbolToFastForex, isCryptoSymbol } from "./fastForexClient";
+import { fetchWithTimeout, isFastForexTimeoutError } from "./fetchWithTimeout";
 import { mapFastForexTimeSeriesToCandles } from "./fastForexMapper";
 
 export interface M5AggregationMetrics {
@@ -106,7 +107,7 @@ async function fetchBinanceM1Batch(symbol: string, limit: number, endTime?: numb
   let url = `https://api.binance.us/api/v3/klines?symbol=${binanceSymbol}&interval=1m&limit=${limit}`;
   if (endTime) url += `&endTime=${endTime}`;
   
-  const response = await fetch(url);
+  const response = await fetchWithTimeout(url);
   if (!response.ok) throw new Error("BINANCE_API_ERROR");
   
   const data = await response.json();
@@ -191,7 +192,7 @@ export async function getFastForexCandles(
       if (start) url += `&start=${encodeURIComponent(start.toString())}`;
       if (currentEnd) url += `&end=${encodeURIComponent(currentEnd.toString())}`;
 
-      const response = await fetch(url, { headers: { "Accept": "application/json" } });
+      const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" } });
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "");
@@ -211,6 +212,7 @@ export async function getFastForexCandles(
         for (const c of allM1Candles) {
           unique.set(c.timestamp, c);
         }
+        const previousCount = allM1Candles.length;
         allM1Candles = Array.from(unique.values()).sort((a, b) => a.timestamp - b.timestamp);
 
         // Update currentEnd to fetch older candles next time
@@ -219,6 +221,10 @@ export async function getFastForexCandles(
         const dateStr = new Date(oldestCandle.timestamp - 1).toISOString();
         currentEnd = dateStr.replace(/\.\d{3}Z$/, 'Z');
         
+        if (allM1Candles.length <= previousCount) {
+           break;
+        }
+
         if (batch.length < fetchLimit) {
            break; // No more older data available
         }
@@ -240,6 +246,9 @@ export async function getFastForexCandles(
     return allM1Candles.slice(-limit);
 
   } catch (error) {
+    if (isFastForexTimeoutError(error)) {
+      throw error;
+    }
     console.error(`[FastForex] Error fetching candles for ${symbol}:`, error);
     throw new Error("MARKET_CANDLES_UNAVAILABLE");
   }
@@ -342,7 +351,7 @@ export async function getBackstageCandles(
     let url = `${FASTFOREX_BASE_URL}/fx/ohlc/time-series?pair=${encodeURIComponent(pairStr)}&interval=${intervalStr}&limit=${fetchLimit}&api_key=${FASTFOREX_API_KEY}`;
     if (currentEnd) url += `&end=${encodeURIComponent(currentEnd)}`;
 
-    const response = await fetch(url, { headers: { "Accept": "application/json" } });
+    const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" } });
     if (!response.ok) {
        console.warn(`[FastForex] API Error ${response.status}`);
        break; // Stop fetching on error, return what we have
