@@ -180,7 +180,6 @@ test("API Integration Tests", async (t) => {
     const successRes = await fetch(`${baseUrl}/api/market/candles?symbol=EUR/USD&timeframe=M5&limit=50`);
     assert.strictEqual(successRes.status, 200);
     const successData = await successRes.json();
-    console.log("SUCCESS_DATA:", JSON.stringify(successData));
     assert.strictEqual(successData.ok, true);
     assert.strictEqual(successData.timeframe, "M5");
     assert.ok(Array.isArray(successData.candles));
