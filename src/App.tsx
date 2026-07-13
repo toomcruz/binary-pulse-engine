@@ -2777,7 +2777,7 @@ export default function App() {
                   className={`h-full transition-all duration-300 ${
                     backstageStatus.validationStatus === "BACKSTAGE_VALIDATED" ? "bg-emerald-500" : "bg-amber-500"
                   }`} 
-                  style={{ width: `${Math.min(100, (backstageStatus.currentSignals / backstageStatus.requiredSignals) * 100)}%` }} 
+                  style={{ width: `${clampPercent(backstageStatus.requiredSignals > 0 ? (backstageStatus.currentSignals / backstageStatus.requiredSignals) * 100 : 0)}%` }} 
                 />
               </div>
 
