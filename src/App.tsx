@@ -1762,6 +1762,7 @@ export default function App() {
   const handleAnalyzeMarket = async () => {
     setIsAnalyzing(true);
     setErrorMessage(null);
+    setSignalApiError(null);
 
     // Grab latest indicator state from the last completed candle
     const closedCandle = candles.length > 1 ? candles[candles.length - 2] : candles[candles.length - 1];
@@ -1776,35 +1777,34 @@ export default function App() {
     };
 
     try {
-      // Real-time market analysis requested directly without mock trade simulation or state resolution.
-
-      const response = await fetch("/api/analyze-market", {
+      // Real-time market analysis via centralized API client — preserves
+      // endpoint/method/status/error/message/details/requestId on failure.
+      const result: any = await apiRequest("/api/analyze-market", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           asset: selectedAsset.symbol,
           timeframe,
           currentPrice,
-          candles: candles.slice(-35), // Send recent historical candles for pattern analysis
+          candles: candles.slice(-35),
           indicators: indicatorPayload,
           strategy: strategy,
-          precisionLevel, // Include the chosen precision level
-          consecutiveLossCount: consecutiveLossCountRef.current, marketContext: { executionMode: isPaperTradingActive ? "paper_trading" : "live", newsRisk: "LOW", session: "OVERLAP", minutesToHighImpactNews: 120, isSyntheticData: !!liveError, isStaleData: (Date.now() - lastRealTickAt) > 15000, dataAgeMs: Date.now() - lastRealTickAt, includesActiveCandle: true }
+          precisionLevel,
+          consecutiveLossCount: consecutiveLossCountRef.current,
+          marketContext: {
+            executionMode: isPaperTradingActive ? "paper_trading" : "live",
+            newsRisk: "LOW",
+            session: "OVERLAP",
+            minutesToHighImpactNews: 120,
+            isSyntheticData: !!liveError,
+            isStaleData: (Date.now() - lastRealTickAt) > 15000,
+            dataAgeMs: Date.now() - lastRealTickAt,
+            includesActiveCandle: true
+          }
         })
       });
 
-      if (!response.ok) {
-        let errMsg = `Servidor retornou erro: ${response.statusText}`;
-        try {
-          const errData = await response.json();
-          if (errData.message) errMsg = errData.message;
-        } catch(e) {}
-        throw new Error(errMsg);
-      }
 
-      const result = await response.json();
 
       const tdEntryPrice = result.marketContext?.executionPrice || result.marketContext?.mid;
 
