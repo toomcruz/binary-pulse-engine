@@ -75,7 +75,12 @@ export interface AISignal {
   };
   entryPrice: number;
   entryMarketContext?: any;
-  status: 'PENDING' | 'WIN' | 'LOSS';
+  status: 'PENDING' | 'WIN' | 'LOSS' | 'DRAW' | 'INVALID_FEED';
+  marketData?: {
+    recommendAll: number;
+    recommendMA: number;
+    recommendOther: number;
+  };
   exitPrice?: number;
   isSimulated: boolean;
   errorMsg?: string;
@@ -107,6 +112,7 @@ export interface AISignal {
     consecutiveLosses: number;
     recentSequence: string[];
     isStrategyFit: boolean;
+    reliabilityScore?: number;
   };
   isAutoSelected?: boolean;
   autoCalibrationResults?: Array<{

@@ -1188,7 +1188,8 @@ export default function App() {
   }, [candles, currentPrice, selectedAsset, strategy, precisionLevel]);
 
   // Active signals and history countdown and resolution engine
-  const getPreciseRemainingSeconds = (sig: { entryTime: string; expiry: string }): number => {
+  const getPreciseRemainingSeconds = (sig: { entryTime?: string; expiry: string }): number => {
+    if (!sig.entryTime) return 0;
     try {
       const now = new Date();
       // entryTime is expected to be HH:MM or HH:MM:SS
@@ -2072,7 +2073,7 @@ export default function App() {
             id: Math.random().toString(36).substring(7),
             asset: asset.symbol,
             timeframe,
-            strategy: bestStrategy.strategy,
+            strategy: bestStrategy.strategy as StrategyType,
             signal: "NEUTRAL",
             technicalScore: 0,
             calibratedProbability: null,
