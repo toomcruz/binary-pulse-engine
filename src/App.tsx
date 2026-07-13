@@ -1860,13 +1860,11 @@ export default function App() {
         setSignalHistory(oldHistory => [newSignal, ...oldHistory]);
       }
 
-    } catch (err: any) {
-      console.error(err);
-      if (err?.message?.includes("Failed to fetch") || err?.message?.includes("failed to fetch")) {
-        setErrorMessage("Não foi possível conectar ao servidor de inteligência artificial. O motor de análise pode estar iniciando ou o ambiente de desenvolvimento está em reinicialização rápida. Por favor, aguarde alguns instantes e clique em Analisar Ativo novamente.");
-      } else {
-        setErrorMessage(err.message || "Erro de conexão com o analisador de mercado.");
-      }
+    } catch (err: unknown) {
+      const details = normalizeApiError(err, { endpoint: "/api/analyze-market", method: "POST" });
+      console.error("[Sinal Individual]", details);
+      setSignalApiError(details);
+      setErrorMessage(details.message);
     } finally {
       setIsAnalyzing(false);
     }
