@@ -35,6 +35,7 @@ async function syncAllFastForexPrices() {
 }
 
 export function startFastForexSync() {
+  if (process.env.NODE_ENV === "test" || process.env.TEST_ENV === "true") return;
   if (fastForexSyncTimer) return;
   if (!isFastForexConfigured()) return;
 

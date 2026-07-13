@@ -1,5 +1,5 @@
 import { MarketCandle } from "../dataSourceTypes";
-import { FASTFOREX_API_KEY, FASTFOREX_BASE_URL, isFastForexConfigured, normalizeSymbolToFastForex, isCryptoSymbol } from "./fastForexClient";
+import { getFastForexApiKey, getFastForexBaseUrl, isFastForexConfigured, normalizeSymbolToFastForex, isCryptoSymbol } from "./fastForexClient";
 import { fetchWithTimeout, isFastForexTimeoutError } from "./fetchWithTimeout";
 import { mapFastForexTimeSeriesToCandles } from "./fastForexMapper";
 
@@ -188,7 +188,7 @@ export async function getFastForexCandles(
       const remaining = targetM1Candles - allM1Candles.length;
       const fetchLimit = Math.min(100, remaining);
       
-      let url = `${FASTFOREX_BASE_URL}/fx/ohlc/time-series?pair=${encodeURIComponent(pairStr)}&interval=${intervalStr}&limit=${fetchLimit}&api_key=${FASTFOREX_API_KEY}`;
+      let url = `${getFastForexBaseUrl()}/fx/ohlc/time-series?pair=${encodeURIComponent(pairStr)}&interval=${intervalStr}&limit=${fetchLimit}&api_key=${getFastForexApiKey()}`;
       if (start) url += `&start=${encodeURIComponent(start.toString())}`;
       if (currentEnd) url += `&end=${encodeURIComponent(currentEnd.toString())}`;
 
@@ -349,7 +349,7 @@ export async function getBackstageCandles(
     const fetchLimit = Math.min(100, targetM1 - allM1.size);
     metrics.batchesFetched++;
     
-    let url = `${FASTFOREX_BASE_URL}/fx/ohlc/time-series?pair=${encodeURIComponent(pairStr)}&interval=${intervalStr}&limit=${fetchLimit}&api_key=${FASTFOREX_API_KEY}`;
+    let url = `${getFastForexBaseUrl()}/fx/ohlc/time-series?pair=${encodeURIComponent(pairStr)}&interval=${intervalStr}&limit=${fetchLimit}&api_key=${getFastForexApiKey()}`;
     if (currentEnd) url += `&end=${encodeURIComponent(currentEnd)}`;
 
     const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" } });

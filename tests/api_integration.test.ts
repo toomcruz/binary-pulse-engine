@@ -2,6 +2,7 @@
 process.env.TEST_ENV = "true";
 process.env.NODE_ENV = "test";
 process.env.FASTFOREX_API_KEY = "mock_test_key";
+process.env.FASTFOREX_BASE_URL = "https://fastforex.test";
 process.env.FASTFOREX_SYMBOLS_FOREX = "EUR/USD,GBP/USD";
 process.env.FASTFOREX_SYMBOLS_CRYPTO = "BTC/USD";
 process.env.FASTFOREX_TIMEOUT_MS = "500";
@@ -89,7 +90,7 @@ function setupMockFetch() {
       } as any;
     }
 
-    return originalFetch(url, init);
+    throw new Error(`Unexpected non-deterministic fetch in API integration test: ${urlStr}`);
   }) as any;
 }
 

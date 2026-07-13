@@ -8,7 +8,16 @@ if (!FASTFOREX_BASE_URL.startsWith("http")) {
 }
 
 export function isFastForexConfigured(): boolean {
-  return FASTFOREX_API_KEY.length > 0;
+  return (process.env.FASTFOREX_API_KEY || "").length > 0;
+}
+
+export function getFastForexApiKey(): string {
+  return process.env.FASTFOREX_API_KEY || FASTFOREX_API_KEY;
+}
+
+export function getFastForexBaseUrl(): string {
+  const baseUrl = process.env.FASTFOREX_BASE_URL || FASTFOREX_BASE_URL;
+  return baseUrl.startsWith("http") ? baseUrl : "https://api.fastforex.io";
 }
 
 export function normalizeSymbolFromFastForex(symbol: string): string {
