@@ -1,14 +1,17 @@
 // Set test environment variables FIRST
 process.env.TEST_ENV = "true";
+process.env.NODE_ENV = "test";
 process.env.FASTFOREX_API_KEY = "mock_test_key";
 process.env.FASTFOREX_SYMBOLS_FOREX = "EUR/USD,GBP/USD";
 process.env.FASTFOREX_SYMBOLS_CRYPTO = "BTC/USD";
+process.env.FASTFOREX_TIMEOUT_MS = "500";
 // Force Gemini formatter to take the deterministic fallback path (no real API calls in tests).
 process.env.GEMINI_API_KEY = "";
 
 import test from 'node:test';
 import assert from 'node:assert';
 import http from 'http';
+import { MarketDataProvider, createDeterministicTestMarketDataProvider } from '../server/dataSources/marketDataProvider';
 
 const originalFetch = global.fetch;
 
@@ -94,11 +97,52 @@ function restoreFetch() {
   global.fetch = originalFetch;
 }
 
+function fetchJson(url: string, init?: RequestInit): Promise<{ response: Response; data: any; durationMs: number }> {
+  const startedAt = Date.now();
+  return fetch(url, init).then(async (response) => ({
+    response,
+    data: await response.json(),
+    durationMs: Date.now() - startedAt
+  }));
+}
+
+function createNeverRespondingProvider(): MarketDataProvider {
+  const deterministic = createDeterministicTestMarketDataProvider();
+  return {
+    ...deterministic,
+    async getPrice() {
+      return new Promise(() => undefined);
+    }
+  };
+}
+
+function createUnavailableProvider(): MarketDataProvider {
+  const deterministic = createDeterministicTestMarketDataProvider();
+  return {
+    ...deterministic,
+    async getPrice() {
+      return null;
+    },
+    getHealth(symbol: string) {
+      return {
+        ...deterministic.getHealth(symbol),
+        isConnected: false,
+        isStaleData: true,
+        dataAgeMs: null,
+        connectionStatus: "ERROR",
+        error: "Deterministic provider unavailable"
+      };
+    }
+  };
+}
+
 test("API Integration Tests", async (t) => {
   setupMockFetch();
 
   // Import app dynamically after setting environment variables
-  const { app } = await import('../server');
+  const { app, setAnalyzeMarketDataProvider } = await import('../server');
+  const { stopFastForexSync } = await import('../server/dataSources/marketDataService');
+  setAnalyzeMarketDataProvider(createDeterministicTestMarketDataProvider());
   
   const server = http.createServer(app);
   await new Promise<void>((resolve) => {
@@ -106,6 +150,13 @@ test("API Integration Tests", async (t) => {
   });
   const port = (server.address() as any).port;
   const baseUrl = `http://127.0.0.1:${port}`;
+
+  t.after(async () => {
+    setAnalyzeMarketDataProvider(null);
+    stopFastForexSync();
+    restoreFetch();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
 
   await t.test("1. GET /api/market/latest-price - Success and Missing Symbol", async () => {
     // Missing symbol should return 400
@@ -154,7 +205,7 @@ test("API Integration Tests", async (t) => {
     assert.strictEqual(errData.error, "INVALID_EXECUTION_MODE");
 
     // Valid executionMode (paper_trading) should work
-    const successRes = await fetch(`${baseUrl}/api/analyze-market`, {
+    const { response: successRes, data: successData, durationMs } = await fetchJson(`${baseUrl}/api/analyze-market`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -167,6 +218,16 @@ test("API Integration Tests", async (t) => {
       })
     });
     assert.strictEqual(successRes.status, 200);
+    assert.ok(durationMs < 2000, `analysis took ${durationMs}ms`);
+    assert.strictEqual(successData.ok, true);
+    assert.strictEqual(successData.asset, "EUR/USD");
+    assert.strictEqual(successData.timeframe, "M5");
+    assert.strictEqual(typeof successData.regime, "string");
+    assert.strictEqual(typeof successData.technicalScore, "number");
+    assert.ok("calibratedProbability" in successData);
+    assert.strictEqual(typeof successData.calibrationAvailable, "boolean");
+    assert.ok(["CALL", "PUT", "NEUTRAL"].includes(successData.signal));
+    assert.ok(Array.isArray(successData.blockReasons));
   });
 
   await t.test("4. POST /api/analyze-market - Calibration Gate Thresholds", async () => {
@@ -207,8 +268,59 @@ test("API Integration Tests", async (t) => {
     assert.strictEqual(errData.error, "INVALID_STRATEGY_MODE");
   });
 
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  const { stopFastForexSync } = await import('../server/dataSources/marketDataService');
-  stopFastForexSync();
-  restoreFetch();
+  await t.test("6. POST /api/analyze-market - provider timeout returns 504", async () => {
+    setAnalyzeMarketDataProvider(createNeverRespondingProvider());
+    const { response, data, durationMs } = await fetchJson(`${baseUrl}/api/analyze-market`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asset: "EUR/USD",
+        timeframe: "M5",
+        currentPrice: 1.0850,
+        marketContext: { executionMode: "paper_trading" }
+      })
+    });
+    assert.strictEqual(response.status, 504);
+    assert.strictEqual(data.ok, false);
+    assert.strictEqual(data.error, "MARKET_DATA_TIMEOUT");
+    assert.strictEqual(typeof data.requestId, "string");
+    assert.ok(durationMs < 2000, `timeout response took ${durationMs}ms`);
+    setAnalyzeMarketDataProvider(createDeterministicTestMarketDataProvider());
+  });
+
+  await t.test("7. POST /api/analyze-market - unavailable provider returns 503", async () => {
+    setAnalyzeMarketDataProvider(createUnavailableProvider());
+    const { response, data } = await fetchJson(`${baseUrl}/api/analyze-market`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asset: "EUR/USD",
+        timeframe: "M5",
+        currentPrice: 1.0850,
+        marketContext: { executionMode: "paper_trading" }
+      })
+    });
+    assert.strictEqual(response.status, 503);
+    assert.strictEqual(data.ok, false);
+    assert.strictEqual(data.error, "MARKET_DATA_UNAVAILABLE");
+    assert.strictEqual(typeof data.requestId, "string");
+    setAnalyzeMarketDataProvider(createDeterministicTestMarketDataProvider());
+  });
+
+  await t.test("8. POST /api/analyze-market - Gemini absent uses deterministic formatter", async () => {
+    const { response, data, durationMs } = await fetchJson(`${baseUrl}/api/analyze-market`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asset: "EUR/USD",
+        timeframe: "M5",
+        currentPrice: 1.0850,
+        marketContext: { executionMode: "paper_trading" }
+      })
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(data.ok, true);
+    assert.ok(Array.isArray(data.reasoning));
+    assert.ok(durationMs < 2000, `Gemini-absent deterministic response took ${durationMs}ms`);
+  });
 });

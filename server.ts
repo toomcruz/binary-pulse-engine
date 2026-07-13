@@ -93,6 +93,26 @@ function sendMarketDataUnavailable(res: express.Response, requestId: string, mes
   });
 }
 
+async function withAnalyzeTimeout<T>(operation: Promise<T>, timeoutMs?: number): Promise<T> {
+  const configured = timeoutMs ?? (process.env.NODE_ENV === "test" || process.env.TEST_ENV === "true" ? 500 : 10_000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), configured);
+  timer.unref?.();
+
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      operation.then(resolve, reject);
+      controller.signal.addEventListener(
+        "abort",
+        () => reject(Object.assign(new Error("Tempo limite ao obter dados de mercado"), { code: "MARKET_DATA_TIMEOUT" })),
+        { once: true }
+      );
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Initialize OANDA Streaming
 initMarketDataService();
 
@@ -666,7 +686,7 @@ app.post("/api/analyze-market", async (req, res) => {
       const isFastForex = !!process.env.FASTFOREX_API_KEY;
       if (isFastForex) {
         tracePhase("price_fetch_started");
-        tick = await marketDataProvider.getPrice(symbolStr);
+        tick = await withAnalyzeTimeout(marketDataProvider.getPrice(symbolStr));
         tracePhase("price_fetch_finished");
         health = marketDataProvider.getHealth(symbolStr);
         const isFastForexOperational = tick &&
@@ -688,7 +708,7 @@ app.post("/api/analyze-market", async (req, res) => {
       }
     } else if (provider === "test") {
       tracePhase("price_fetch_started");
-      tick = await marketDataProvider.getPrice(symbolStr);
+      tick = await withAnalyzeTimeout(marketDataProvider.getPrice(symbolStr));
       tracePhase("price_fetch_finished");
       health = marketDataProvider.getHealth(symbolStr);
 
@@ -761,7 +781,7 @@ app.post("/api/analyze-market", async (req, res) => {
     let finalCandles: Candle[] = [];
     try {
       tracePhase("candles_fetch_started");
-      const realMarketCandles = await marketDataProvider.getCandles(symbolStr, granularity, 110);
+      const realMarketCandles = await withAnalyzeTimeout(marketDataProvider.getCandles(symbolStr, granularity, 110));
       tracePhase("candles_fetch_finished");
       
       if (realMarketCandles && realMarketCandles.length > 0) {

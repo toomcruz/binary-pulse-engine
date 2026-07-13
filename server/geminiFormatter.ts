@@ -22,6 +22,10 @@ function getAiClient(): GoogleGenAI {
 }
 
 export async function formatDecisionWithGemini(decision: any): Promise<string[]> {
+  if (!process.env.GEMINI_API_KEY) {
+    return fallbackFormatter(decision);
+  }
+
   try {
     const ai = getAiClient();
     
