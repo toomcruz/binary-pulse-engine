@@ -3497,7 +3497,7 @@ export default function App() {
                                   <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
                                     <div 
                                       className={`h-full rounded-full ${isActivated ? "bg-violet-500" : "bg-slate-600"}`}
-                                      style={{ width: `${res.winRate}%` }}
+                                      style={{ width: `${clampPercent(res.winRate)}%` }}
                                     ></div>
                                   </div>
 
