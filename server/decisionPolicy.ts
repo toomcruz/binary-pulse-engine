@@ -90,7 +90,7 @@ export function finalDecision(
   }
 
   // Apply Calibration Thresholds (Only take trades if calibrated prob is decent, e.g. >= 58%)
-  if (!disableCalibrationVeto && finalSignal !== 'NEUTRAL' && (cal as any).calibrationSource !== "none" && cal.calibratedProbability < 58) {
+  if (!disableCalibrationVeto && finalSignal !== 'NEUTRAL' && (cal as any).calibrationSource !== "none" && (cal.calibratedProbability ?? 0) < 58) {
     finalSignal = 'NEUTRAL';
     finalVetoes.push(`VETO: Probabilidade calibrada baixa (${cal.calibratedProbability}%). Esperado >= 58%.`);
     reasons.push("Sinal neutralizado por probabilidade calibrada insuficiente.");

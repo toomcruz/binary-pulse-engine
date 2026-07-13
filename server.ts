@@ -468,9 +468,9 @@ app.post("/api/backstage-scan-all", async (req, res) => {
           }
 
           // Regime dominante
-          const regimes = stratSignals.map(s => s.regime).filter(Boolean);
+          const regimes = stratSignals.map(s => s.regime).filter((r): r is string => Boolean(r));
           const regimeCounts: Record<string, number> = {};
-          regimes.forEach(r => regimeCounts[r] = (regimeCounts[r] || 0) + 1);
+          regimes.forEach(r => { regimeCounts[r] = (regimeCounts[r] || 0) + 1; });
           let dominantRegime = "range";
           let maxCount = 0;
           for (const r in regimeCounts) {
@@ -1149,7 +1149,7 @@ app.get("/api/test-analysis", async (req, res) => {
       hasToken: true,
       hasAccountId: true,
       isSyntheticData: false,
-      isStaleData: health ? health.status === "stale" : false,
+      isStaleData: health ? (health as any).status === "stale" : false,
       dataAgeMs: health ? health.dataAgeMs : 0,
       dataSourceType: 'fastforex',
       feedMode: "hybrid",
