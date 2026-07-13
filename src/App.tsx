@@ -3129,7 +3129,13 @@ export default function App() {
                 </div>
               </div>
 
-              {errorMessage && (
+              {signalApiError && (
+                <ApiErrorBanner
+                  error={signalApiError}
+                  onDismiss={() => { setSignalApiError(null); setErrorMessage(null); }}
+                />
+              )}
+              {!signalApiError && errorMessage && (
                 <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-[11px] flex gap-2 animate-shake">
                   <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
                   <span>{errorMessage}</span>
