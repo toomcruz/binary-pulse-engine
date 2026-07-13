@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import TradingChart from "./components/TradingChart";
 import { Candle, AISignal, Trade, AssetConfig, StrategyType, StrategyCatalog } from "./types";
-import { formatPercent, finiteNumber, clampPercent } from "./lib/format";
+import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPercent, formatPrice, formatInteger } from "./lib/format";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
@@ -2435,10 +2435,10 @@ export default function App() {
               <div className="flex flex-col gap-1.5 pt-0.5">
                 <div className="flex justify-between text-[9px] font-mono">
                   <span className="text-emerald-400 font-bold flex items-center gap-1">
-                    �� Compra: {liveDiagnostics.buyerSentiment}%
+                    �� Compra: {formatPercent(liveDiagnostics.buyerSentiment)}
                   </span>
                   <span className="text-rose-400 font-bold flex items-center gap-1">
-                    Venda: {liveDiagnostics.sellerSentiment}% ��
+                    Venda: {formatPercent(liveDiagnostics.sellerSentiment)} ��
                   </span>
                 </div>
                 
@@ -2446,11 +2446,11 @@ export default function App() {
                 <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden flex border border-slate-800/50">
                   <div 
                     className="h-full bg-emerald-500 transition-all duration-500 shadow-[inset_-2px_0_4px_rgba(0,0,0,0.3)]"
-                    style={{ width: `${liveDiagnostics.buyerSentiment}%` }}
+                    style={{ width: `${clampPercent(liveDiagnostics.buyerSentiment)}%` }}
                   />
                   <div 
                     className="h-full bg-rose-500 transition-all duration-500"
-                    style={{ width: `${liveDiagnostics.sellerSentiment}%` }}
+                    style={{ width: `${clampPercent(liveDiagnostics.sellerSentiment)}%` }}
                   />
                 </div>
                 
@@ -2777,7 +2777,7 @@ export default function App() {
                   className={`h-full transition-all duration-300 ${
                     backstageStatus.validationStatus === "BACKSTAGE_VALIDATED" ? "bg-emerald-500" : "bg-amber-500"
                   }`} 
-                  style={{ width: `${Math.min(100, (backstageStatus.currentSignals / backstageStatus.requiredSignals) * 100)}%` }} 
+                  style={{ width: `${clampPercent(backstageStatus.requiredSignals > 0 ? (backstageStatus.currentSignals / backstageStatus.requiredSignals) * 100 : 0)}%` }} 
                 />
               </div>
 
@@ -2903,7 +2903,7 @@ export default function App() {
                           <span>Regime: <strong className="text-slate-300 uppercase">{item.dominantRegime}</strong></span>
                         </div>
                         <div className="flex justify-between items-center text-[8.5px] mt-0.5 pt-0.5 border-t border-slate-800/30">
-                          <span>Assertividade: <strong className={(item.winRate !== null && item.winRate >= 58) ? "text-emerald-400" : "text-rose-400"}>{item.winRate !== null ? item.winRate.toFixed(1) + "%" : "N/A"}</strong></span>
+                          <span>Assertividade: <strong className={(item.winRate !== null && item.winRate >= 58) ? "text-emerald-400" : "text-rose-400"}>{item.winRate !== null ? formatPercent(item.winRate, 1) : "N/A"}</strong></span>
                           <span>Sinais: <strong className="text-slate-200">{item.totalDecided}</strong></span>
                           <span>Max Loss: <strong className="text-slate-200">{item.maxConsecutiveLosses}</strong></span>
                         </div>
@@ -2957,12 +2957,12 @@ export default function App() {
                   </div>
                   <div className="flex justify-between text-[9px] text-slate-300 font-mono">
                     <span>Sinais Decididos: {paperTradingStatus.currentSignals}</span>
-                    <span>Win Rate: {paperTradingStatus.winRate}%</span>
+                    <span>Win Rate: {formatPercent(paperTradingStatus.winRate)}</span>
                   </div>
                   <div className="w-full bg-slate-900 rounded-full h-1">
                     <div 
                       className="bg-amber-500 h-full"
-                      style={{ width: `${Math.min(100, (paperTradingStatus.currentSignals / paperTradingStatus.requiredSignals) * 100)}%` }}
+                      style={{ width: `${clampPercent(paperTradingStatus.requiredSignals > 0 ? (paperTradingStatus.currentSignals / paperTradingStatus.requiredSignals) * 100 : 0)}%` }}
                     />
                   </div>
                 </div>
@@ -3183,7 +3183,7 @@ export default function App() {
                     <div className="h-6 w-[1px] bg-slate-800"></div>
                     <div className="text-center px-2">
                       <span className="text-[9px] text-slate-500 block uppercase">Qualidade técnica</span>
-                      <span className={`text-sm font-mono font-bold ${isFastForexOperational ? 'text-indigo-400' : 'text-slate-600'}`}>{isFastForexOperational ? `${activeSignal.technicalScore ?? 0}/100` : "N/A"}</span>
+                      <span className={`text-sm font-mono font-bold ${isFastForexOperational ? 'text-indigo-400' : 'text-slate-600'}`}>{isFastForexOperational ? `${formatScore(activeSignal.technicalScore)}/100` : "N/A"}</span>
                     </div>
                     
                     <div className="h-6 w-[1px] bg-slate-800"></div>
@@ -3191,7 +3191,7 @@ export default function App() {
                       <span className="text-[9px] text-slate-500 block uppercase">Prob. Estatística</span>
                       <span className={`text-sm font-mono font-bold ${isFastForexOperational ? 'text-emerald-400' : 'text-slate-600'}`}>
                         {isFastForexOperational ? 
-                          (activeSignal.calibrationAvailable && activeSignal.calibratedProbability !== null && activeSignal.calibratedProbability !== undefined ? `${activeSignal.calibratedProbability}%` : "Indisponível")
+                          (activeSignal.calibrationAvailable && activeSignal.calibratedProbability !== null && activeSignal.calibratedProbability !== undefined ? formatPercent(activeSignal.calibratedProbability) : "Indisponível")
                           : "N/A"}
                       </span>
                     </div>
@@ -3369,7 +3369,7 @@ export default function App() {
                       {/* Asset & Probability Display */}
                       <div className="w-full text-center z-10 mt-1">
                         <div className="text-xs font-semibold text-slate-300">
-                          SCORE TÉCNICO: {activeSignal.technicalScore ?? 0} | REGIME: {activeSignal.regime?.toUpperCase() || 'N/A'}
+                          SCORE TÉCNICO: {formatScore(activeSignal.technicalScore)} | REGIME: {activeSignal.regime?.toUpperCase() || 'N/A'}
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono mt-0.5 uppercase">
                           SISTEMA DE ALTA FREQUÊNCIA ATIVO
@@ -3497,7 +3497,7 @@ export default function App() {
                                   <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
                                     <div 
                                       className={`h-full rounded-full ${isActivated ? "bg-violet-500" : "bg-slate-600"}`}
-                                      style={{ width: `${res.winRate}%` }}
+                                      style={{ width: `${clampPercent(res.winRate)}%` }}
                                     ></div>
                                   </div>
 
@@ -4055,7 +4055,7 @@ export default function App() {
                           ? "bg-emerald-400 shadow-md shadow-emerald-500/20" 
                           : "bg-emerald-500/50"
                       }`}
-                      style={{ width: `${isFastForexOperational ? Math.min(100, (liveDiagnostics.callScore / liveDiagnostics.requiredScore) * 100) : 0}%` }}
+                      style={{ width: `${isFastForexOperational ? clampPercent(liveDiagnostics.requiredScore > 0 ? (liveDiagnostics.callScore / liveDiagnostics.requiredScore) * 100 : 0) : 0}%` }}
                     />
                   </div>
                   <span className="text-[8px] text-slate-500 leading-tight">
@@ -4080,7 +4080,7 @@ export default function App() {
                           ? "bg-rose-400 shadow-md shadow-rose-500/20" 
                           : "bg-rose-500/50"
                       }`}
-                      style={{ width: `${isFastForexOperational ? Math.min(100, (liveDiagnostics.putScore / liveDiagnostics.requiredScore) * 100) : 0}%` }}
+                      style={{ width: `${isFastForexOperational ? clampPercent(liveDiagnostics.requiredScore > 0 ? (liveDiagnostics.putScore / liveDiagnostics.requiredScore) * 100 : 0) : 0}%` }}
                     />
                   </div>
                   <span className="text-[8px] text-slate-500 leading-tight">
@@ -4231,10 +4231,10 @@ export default function App() {
                         
   <div className="flex flex-col items-end text-right ml-2 space-y-1">
     <div className="text-[10px] text-gray-400">
-      <span className="font-medium text-gray-300">Qualidade técnica:</span> {signal.technicalScore}/100
+      <span className="font-medium text-gray-300">Qualidade técnica:</span> {formatScore(signal.technicalScore)}/100
     </div>
     <div className="text-[10px] text-gray-400">
-      <span className="font-medium text-gray-300">Probabilidade estatística:</span> {signal.calibrationAvailable && signal.calibratedProbability !== null ? `${signal.calibratedProbability}%` : 'indisponível'}
+      <span className="font-medium text-gray-300">Probabilidade estatística:</span> {signal.calibrationAvailable && signal.calibratedProbability !== null ? formatPercent(signal.calibratedProbability) : 'indisponível'}
     </div>
   </div>
   
@@ -4374,14 +4374,14 @@ export default function App() {
               <div className="mb-4 bg-slate-950/60 border border-slate-800 p-4 rounded-xl flex flex-col gap-3">
                 <div className="flex items-center justify-between text-xs font-bold font-mono">
                   <span className="text-slate-400 uppercase tracking-wider">Progresso da Varredura:</span>
-                  <span className="text-emerald-400">{sweepProgress}%</span>
+                  <span className="text-emerald-400">{formatPercent(sweepProgress)}</span>
                 </div>
                 
                 {/* Progress bar wrapper */}
                 <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden relative border border-slate-800">
                   <motion.div 
                     className="h-full bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-500 rounded-full"
-                    style={{ width: `${sweepProgress}%` }}
+                    style={{ width: `${clampPercent(sweepProgress)}%` }}
                     layout
                   />
                 </div>
@@ -4457,13 +4457,13 @@ export default function App() {
                           {isCall && (
                             <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-xl text-xs font-black">
                               <TrendingUp size={12} className="animate-bounce" />
-                              <span>CALL • {result.signal?.technicalScore}%</span>
+                              <span>CALL • {formatPercent(result.signal?.technicalScore)}</span>
                             </div>
                           )}
                           {isPut && (
                             <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/30 text-rose-400 px-3 py-1 rounded-xl text-xs font-black">
                               <TrendingDown size={12} className="animate-bounce" />
-                              <span>PUT • {result.signal?.technicalScore}%</span>
+                              <span>PUT • {formatPercent(result.signal?.technicalScore)}</span>
                             </div>
                           )}
                         </div>
