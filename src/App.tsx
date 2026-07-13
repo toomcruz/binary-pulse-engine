@@ -1886,6 +1886,8 @@ export default function App() {
     setShowSweepModal(true);
     setSweepProgress(0);
     setSweepCurrentAsset("");
+    setSweepGlobalError(null);
+    setSweepAssetErrors({});
     
     addAutopilotLog("Varredura geral de ativos iniciada no terminal...", "info");
     
