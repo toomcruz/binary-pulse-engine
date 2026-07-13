@@ -64,7 +64,6 @@ export async function fetchWithTimeout(
     abortReason = "timeout";
     controller.abort();
   }, timeoutMs);
-  timer.unref?.();
 
   try {
     return await fetch(url, {
@@ -72,10 +71,13 @@ export async function fetchWithTimeout(
       signal: controller.signal
     });
   } catch (error) {
+    if (abortReason === "external") {
+      throw new FastForexRequestAbortError();
+    }
+    if (abortReason === "timeout") {
+      throw new FastForexRequestTimeoutError();
+    }
     if ((error as Error).name === "AbortError") {
-      if (abortReason === "external") {
-        throw new FastForexRequestAbortError();
-      }
       throw new FastForexRequestTimeoutError();
     }
     throw error;

@@ -57,6 +57,31 @@ test('fetchWithTimeout cancels an in-flight FastForex request with the external 
   }
 });
 
+test('fetchWithTimeout classifies external abort with a custom reason as FastForex abort', async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+
+  globalThis.fetch = async (_input: string | URL | Request, init?: RequestInit) => {
+    return await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+    });
+  };
+
+  try {
+    const { fetchWithTimeout, isFastForexAbortError, isFastForexTimeoutError } = await import('../server/dataSources/fastForex/fetchWithTimeout');
+    const promise = fetchWithTimeout('https://fastforex.test/fx/ohlc/time-series', { signal: controller.signal }, 10_000);
+    controller.abort(new Error('Backstage scan cancelled'));
+
+    await assert.rejects(promise, (error) => {
+      assert.equal(isFastForexAbortError(error), true);
+      assert.equal(isFastForexTimeoutError(error), false);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('getBackstageCandles stops between FastForex pages when the scan signal is aborted', async () => {
   const allResults = Array.from({ length: 250 }, (_, index) => makeResult(index));
   const originalFetch = globalThis.fetch;
