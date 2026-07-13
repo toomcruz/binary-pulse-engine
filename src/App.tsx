@@ -1982,7 +1982,7 @@ export default function App() {
           atr: 0.0002
         };
         
-        const response = await fetch("/api/analyze-market", {
+        const result: any = await apiRequest("/api/analyze-market", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1996,17 +1996,6 @@ export default function App() {
             consecutiveLossCount: 0
           })
         });
-        
-        if (!response.ok) {
-          let errMsg = "Erro ao processar análise do ativo";
-          try {
-            const errData = await response.json();
-            if (errData.message) errMsg = errData.message;
-          } catch(e) {}
-          throw new Error(errMsg);
-        }
-        
-        const result = await response.json();
 
         const entryPriceVal = result.marketContext?.executionPrice || result.marketContext?.mid;
         
