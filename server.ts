@@ -398,6 +398,56 @@ function backtestStrategy(candles: any[], strategy: string, asset: string, preci
   };
 }
 
+
+const BACKSTAGE_REPLAY_SUPPORTED_ASSETS = new Set([
+  "EUR/USD", "GBP/USD", "USD/JPY", "EUR/JPY", "GBP/JPY", "AUD/USD", "USD/CAD",
+  "EUR/GBP", "BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "BNB/USD", "USD/BRL"
+]);
+
+const BACKSTAGE_REPLAY_SUPPORTED_STRATEGIES = new Set([
+  "all",
+  "auto",
+  "reversion",
+  "trend",
+  "price_action",
+  "breakout",
+  "candle_flow",
+  "order_block",
+  "liquidity_sweep",
+  "fvg"
+]);
+
+const BACKSTAGE_REPLAY_SUPPORTED_PRECISION_LEVELS = new Set(["normal", "high", "elite"]);
+
+function normalizeBackstageReplayTimeframe(timeframe: unknown): "M1" | "M5" | null {
+  if (typeof timeframe !== "string") return null;
+  const clean = timeframe.trim().toLowerCase();
+  if (["m1", "1m", "1min", "1minute", "1-minute"].includes(clean)) return "M1";
+  if (["m5", "5m", "5min", "5minute", "5-minute"].includes(clean)) return "M5";
+  return null;
+}
+
+function normalizeBackstageReplayAsset(asset: unknown): string {
+  const raw = typeof asset === "object" && asset !== null && "symbol" in asset
+    ? (asset as { symbol?: unknown }).symbol
+    : asset;
+  return typeof raw === "string" ? raw.trim().toUpperCase() : "";
+}
+
+function normalizeBackstageReplayStrategy(strategy: unknown): string {
+  if (strategy === undefined || strategy === null || strategy === "") return "all";
+  return typeof strategy === "string" ? strategy.trim() : "";
+}
+
+function normalizeBackstageReplayPrecisionLevel(precisionLevel: unknown): "normal" | "high" | "elite" | undefined {
+  if (precisionLevel === undefined || precisionLevel === null || precisionLevel === "") return undefined;
+  if (typeof precisionLevel !== "string") return undefined;
+  const normalized = precisionLevel.trim().toLowerCase();
+  return BACKSTAGE_REPLAY_SUPPORTED_PRECISION_LEVELS.has(normalized)
+    ? normalized as "normal" | "high" | "elite"
+    : undefined;
+}
+
 // Strategy-Market-Fit & Market Cycle Assessment Engine (Anti-Loss Shield)
 // REST API endpoint to analyze market indicators and generate high-assertiveness signals
 
@@ -405,15 +455,38 @@ function backtestStrategy(candles: any[], strategy: string, asset: string, preci
 app.post("/api/backstage-replay", async (req, res) => {
   try {
     const { asset, timeframe, strategy, precisionLevel, payout } = req.body;
-    const assetStr = typeof asset === "object" && asset !== null ? asset.symbol || "" : String(asset);
+    const assetStr = normalizeBackstageReplayAsset(asset);
+    const normalizedTimeframe = normalizeBackstageReplayTimeframe(timeframe);
+    const normalizedStrategy = normalizeBackstageReplayStrategy(strategy);
+    const normalizedPrecisionLevel = normalizeBackstageReplayPrecisionLevel(precisionLevel);
     const normalizedPayout = validateReplayPayout(payout);
     
-    if (!assetStr || !timeframe) {
-      res.status(400).json({ error: "Missing required parameters." });
+    if (!assetStr) {
+      res.status(400).json({ error: "MISSING_ASSET" });
+      return;
+    }
+
+    if (!BACKSTAGE_REPLAY_SUPPORTED_ASSETS.has(assetStr)) {
+      res.status(400).json({ error: "INVALID_ASSET" });
+      return;
+    }
+
+    if (!normalizedTimeframe) {
+      res.status(400).json({ error: "INVALID_TIMEFRAME" });
+      return;
+    }
+
+    if (!BACKSTAGE_REPLAY_SUPPORTED_STRATEGIES.has(normalizedStrategy)) {
+      res.status(400).json({ error: "INVALID_STRATEGY" });
+      return;
+    }
+
+    if (precisionLevel !== undefined && precisionLevel !== null && precisionLevel !== "" && !normalizedPrecisionLevel) {
+      res.status(400).json({ error: "INVALID_PRECISION_LEVEL" });
       return;
     }
     
-    const granularity = (timeframe === "1min" || timeframe === "M1") ? "M1" : "M5";
+    const granularity = normalizedTimeframe;
     const targetSignals = 100;
     
     // Reset calibration DB so it doesn't leak between different replays
@@ -427,10 +500,10 @@ app.post("/api/backstage-replay", async (req, res) => {
 
     const { results, trainSignals, invalidExpiryGaps, invalidExpiryGapEvents, datasetHash } = runBackstageReplay({
        asset: assetStr,
-       timeframe,
+       timeframe: normalizedTimeframe,
        candles: candles,
-       strategy,
-       precisionLevel
+       strategy: normalizedStrategy,
+       precisionLevel: normalizedPrecisionLevel
     });
 
     const wins = results.filter((r: any) => r.result === "WIN").length;
