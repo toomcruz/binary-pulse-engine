@@ -4257,7 +4257,7 @@ export default function App() {
               </div>
               <div>
                 <span className="text-[8px] text-slate-500 uppercase block mb-0.5">Confiança Med.</span>
-                <span className="text-xs font-bold text-purple-400 font-mono">{stats.avgConfidence}%</span>
+                <span className="text-xs font-bold text-purple-400 font-mono">{formatPercent(stats.avgConfidence)}</span>
               </div>
             </div>
           </div>
