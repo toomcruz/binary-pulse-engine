@@ -258,6 +258,25 @@ export interface BackstageReplayStatus {
   byRegime: Record<string, any>;
 }
 
+export type ReplayEconomicStatus =
+  | "ECONOMICALLY_PROFITABLE"
+  | "ECONOMICALLY_UNPROFITABLE"
+  | "ECONOMIC_METRICS_UNAVAILABLE";
+
+export interface ReplayEconomicMetrics {
+  economicMetricsAvailable: boolean;
+  economicStatus: ReplayEconomicStatus;
+  payout: number | null;
+  breakEvenWinRate: number | null;
+  grossProfit: number | null;
+  grossLoss: number | null;
+  netProfit: number | null;
+  roiPercent: number | null;
+  expectedValuePerTrade: number | null;
+  decidedTrades: number;
+  draws: number;
+}
+
 export interface CombinedValidationStatus {
   backstageValidated: boolean;
   paperTradingValidated: boolean;
