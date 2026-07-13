@@ -182,9 +182,7 @@ test('getBackstageCandles preserves normal FastForex pagination when no signal i
 
 test('getBackstageCandles preserves MARKET_DATA_ABORTED for external cancellation during Binance pagination', async () => {
   const originalFetch = globalThis.fetch;
-  const originalNodeEnv = process.env.NODE_ENV;
   const originalCryptoSymbols = process.env.FASTFOREX_SYMBOLS_CRYPTO;
-  process.env.NODE_ENV = 'production';
   process.env.FASTFOREX_SYMBOLS_CRYPTO = 'BTC/USD';
   const controller = new AbortController();
 
@@ -203,7 +201,6 @@ test('getBackstageCandles preserves MARKET_DATA_ABORTED for external cancellatio
     });
   } finally {
     globalThis.fetch = originalFetch;
-    process.env.NODE_ENV = originalNodeEnv;
     if (originalCryptoSymbols === undefined) delete process.env.FASTFOREX_SYMBOLS_CRYPTO;
     else process.env.FASTFOREX_SYMBOLS_CRYPTO = originalCryptoSymbols;
   }
@@ -211,10 +208,8 @@ test('getBackstageCandles preserves MARKET_DATA_ABORTED for external cancellatio
 
 test('getBackstageCandles preserves MARKET_DATA_TIMEOUT for internal Binance pagination timeout', async () => {
   const originalFetch = globalThis.fetch;
-  const originalNodeEnv = process.env.NODE_ENV;
   const originalTimeout = process.env.FASTFOREX_TIMEOUT_MS;
   const originalCryptoSymbols = process.env.FASTFOREX_SYMBOLS_CRYPTO;
-  process.env.NODE_ENV = 'production';
   process.env.FASTFOREX_TIMEOUT_MS = '5';
   process.env.FASTFOREX_SYMBOLS_CRYPTO = 'BTC/USD';
 
@@ -232,7 +227,6 @@ test('getBackstageCandles preserves MARKET_DATA_TIMEOUT for internal Binance pag
     });
   } finally {
     globalThis.fetch = originalFetch;
-    process.env.NODE_ENV = originalNodeEnv;
     if (originalTimeout === undefined) delete process.env.FASTFOREX_TIMEOUT_MS;
     else process.env.FASTFOREX_TIMEOUT_MS = originalTimeout;
     if (originalCryptoSymbols === undefined) delete process.env.FASTFOREX_SYMBOLS_CRYPTO;
