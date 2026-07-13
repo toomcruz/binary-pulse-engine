@@ -11,7 +11,7 @@ import { fetchTwelveDataCandles } from './server/dataSources/twelveData/twelveDa
 import { getMassiveConfig } from './server/dataSources/massive/massiveClient';
 import { getLatestMassiveTick } from './server/dataSources/massive/massivePrice';
 import { fetchMassiveCandles } from './server/dataSources/massive/massiveCandles';
-import { runBackstageReplay } from './server/backstageReplay';
+import { calculateReplayEconomicMetrics, runBackstageReplay, validateReplayPayout } from './server/backstageReplay';
 import { getAnalyzeMarketDataProvider, setAnalyzeMarketDataProvider } from './server/dataSources/marketDataProvider';
 import { isFastForexTimeoutError } from './server/dataSources/fastForex/fetchWithTimeout';
 import {
@@ -404,8 +404,9 @@ function backtestStrategy(candles: any[], strategy: string, asset: string, preci
 // Endpoint to run Backstage Historical Replay
 app.post("/api/backstage-replay", async (req, res) => {
   try {
-    const { asset, timeframe, strategy, precisionLevel } = req.body;
+    const { asset, timeframe, strategy, precisionLevel, payout } = req.body;
     const assetStr = typeof asset === "object" && asset !== null ? asset.symbol || "" : String(asset);
+    const normalizedPayout = validateReplayPayout(payout);
     
     if (!assetStr || !timeframe) {
       res.status(400).json({ error: "Missing required parameters." });
@@ -451,6 +452,7 @@ app.post("/api/backstage-replay", async (req, res) => {
     }
 
     const winRate = signalsDecided > 0 ? (wins / signalsDecided) * 100 : 0;
+    const economicMetrics = calculateReplayEconomicMetrics(results, normalizedPayout);
     
     let status = "BACKSTAGE_TESTING";
     if (signalsDecided >= targetSignals && winRate >= 58 && maxConsecutiveLosses <= 5) {
@@ -474,6 +476,7 @@ app.post("/api/backstage-replay", async (req, res) => {
       winRate,
       maxConsecutiveLosses,
       pagination: paginationMetrics,
+      ...economicMetrics,
       results
     });
   } catch (error: any) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { getExpectedExpiryMs, runBackstageReplay } from '../server/backstageReplay';
+import { calculateReplayEconomicMetrics, getExpectedExpiryMs, runBackstageReplay, validateReplayPayout } from '../server/backstageReplay';
 import { resetCalibrationSession, calibrateProbability, registerTradeResult } from '../server/calibration';
 import { evaluateOrderBlock } from '../server/triggers/orderBlock';
 import { evaluateLiquiditySweep } from '../server/triggers/liquiditySweep';
@@ -277,4 +277,125 @@ test('Validation results do not increase calibration sampleSize', () => {
         .filter((sampleSize): sampleSize is number => typeof sampleSize === "number");
 
     assert.deepStrictEqual(sampleSizes, [...sampleSizes].sort((a, b) => a - b));
+});
+
+
+test('Replay economic metrics use payout 0.80 with normalized binary-options stake', () => {
+    const metrics = calculateReplayEconomicMetrics([
+        { result: "WIN" },
+        { result: "WIN" },
+        { result: "LOSS" },
+        { result: "DRAW" }
+    ], 0.80);
+
+    assert.strictEqual(metrics.economicMetricsAvailable, true);
+    assert.strictEqual(metrics.economicStatus, "ECONOMICALLY_PROFITABLE");
+    assert.strictEqual(metrics.payout, 0.80);
+    assert.strictEqual(metrics.breakEvenWinRate, 1 / 1.8);
+    assert.strictEqual(metrics.grossProfit, 1.6);
+    assert.strictEqual(metrics.grossLoss, 1);
+    assert.strictEqual(metrics.netProfit, 0.6000000000000001);
+    assert.strictEqual(metrics.roiPercent, 20.000000000000004);
+    assert.strictEqual(metrics.expectedValuePerTrade, 0.20000000000000004);
+    assert.strictEqual(metrics.profitable, true);
+    assert.strictEqual(metrics.decidedTrades, 3);
+    assert.strictEqual(metrics.draws, 1);
+});
+
+test('Replay economic metrics use payout 0.70 and can change profitability for same win rate', () => {
+    const sameWinRateResults = [
+        { result: "WIN" as const },
+        { result: "WIN" as const },
+        { result: "WIN" as const },
+        { result: "WIN" as const },
+        { result: "LOSS" as const },
+        { result: "LOSS" as const },
+        { result: "LOSS" as const }
+    ];
+
+    const payout080 = calculateReplayEconomicMetrics(sameWinRateResults, 0.80);
+    const payout070 = calculateReplayEconomicMetrics(sameWinRateResults, 0.70);
+
+    assert.strictEqual(payout070.payout, 0.70);
+    assert.strictEqual(payout070.breakEvenWinRate, 1 / 1.7);
+    assert.strictEqual(payout080.netProfit, 0.20000000000000018);
+    assert.strictEqual(payout080.profitable, true);
+    assert.strictEqual(payout080.economicStatus, "ECONOMICALLY_PROFITABLE");
+    assert.strictEqual(payout070.grossProfit, 2.8);
+    assert.strictEqual(payout070.grossLoss, 3);
+    assert.strictEqual(payout070.netProfit, -0.20000000000000018);
+    assert.strictEqual(payout070.roiPercent, -2.85714285714286);
+    assert.strictEqual(payout070.expectedValuePerTrade, -0.028571428571428598);
+    assert.strictEqual(payout070.profitable, false);
+    assert.strictEqual(payout070.economicStatus, "ECONOMICALLY_UNPROFITABLE");
+    assert.strictEqual(payout070.decidedTrades, 7);
+});
+
+test('Replay economic metrics count DRAW with zero financial result', () => {
+    const metrics = calculateReplayEconomicMetrics([
+        { result: "WIN" },
+        { result: "DRAW" },
+        { result: "LOSS" },
+        { result: "DRAW" }
+    ], 1);
+
+    assert.strictEqual(metrics.grossProfit, 1);
+    assert.strictEqual(metrics.grossLoss, 1);
+    assert.strictEqual(metrics.netProfit, 0);
+    assert.strictEqual(metrics.decidedTrades, 2);
+    assert.strictEqual(metrics.draws, 2);
+    assert.strictEqual(metrics.expectedValuePerTrade, 0);
+});
+
+test('Replay economic metrics are unavailable when payout is absent', () => {
+    const metrics = calculateReplayEconomicMetrics([{ result: "WIN" }, { result: "LOSS" }]);
+
+    assert.strictEqual(metrics.economicMetricsAvailable, false);
+    assert.strictEqual(metrics.economicStatus, "ECONOMIC_METRICS_UNAVAILABLE");
+    assert.strictEqual(metrics.payout, null);
+    assert.strictEqual(metrics.breakEvenWinRate, null);
+    assert.strictEqual(metrics.grossProfit, null);
+    assert.strictEqual(metrics.grossLoss, null);
+    assert.strictEqual(metrics.netProfit, null);
+    assert.strictEqual(metrics.roiPercent, null);
+    assert.strictEqual(metrics.expectedValuePerTrade, null);
+    assert.strictEqual(metrics.profitable, null);
+    assert.strictEqual(metrics.decidedTrades, 2);
+    assert.strictEqual(metrics.draws, 0);
+});
+
+test('Replay payout validation rejects values below 0 or above 1', () => {
+    assert.throws(() => validateReplayPayout(-0.01), /INVALID_PAYOUT/);
+    assert.throws(() => validateReplayPayout(1.01), /INVALID_PAYOUT/);
+    assert.strictEqual(validateReplayPayout(0), 0);
+    assert.strictEqual(validateReplayPayout(1), 1);
+    assert.strictEqual(validateReplayPayout(undefined), undefined);
+});
+
+test('Payout does not change replay decisions or directional hashes', () => {
+    const candles = makeReplayCandles(360);
+    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles });
+    const baselineHash = replay.resultsHash;
+    const baselineDecisions = replay.results.map(r => ({
+        timestamp: r.timestamp,
+        strategy: r.strategy,
+        signal: r.signal,
+        entryPrice: r.entryPrice,
+        exitPrice: r.exitPrice,
+        result: r.result
+    }));
+
+    const metrics = calculateReplayEconomicMetrics(replay.results, 0.80);
+    const replayAfterEconomicMetrics = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles });
+
+    assert.strictEqual(metrics.economicMetricsAvailable, true);
+    assert.strictEqual(replayAfterEconomicMetrics.resultsHash, baselineHash);
+    assert.deepStrictEqual(replayAfterEconomicMetrics.results.map(r => ({
+        timestamp: r.timestamp,
+        strategy: r.strategy,
+        signal: r.signal,
+        entryPrice: r.entryPrice,
+        exitPrice: r.exitPrice,
+        result: r.result
+    })), baselineDecisions);
 });
