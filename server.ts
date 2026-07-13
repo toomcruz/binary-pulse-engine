@@ -999,7 +999,14 @@ app.post("/api/analyze-market", async (req, res) => {
     tracePhase("formatter_started");
     const explanation = await formatDecisionWithGemini(engineDecision);
     tracePhase("formatter_finished");
-    const responseObj = { ...engineDecision, ok: true, requestId, marketContext, reasoning: explanation };
+    const responseObj = {
+      ...engineDecision,
+      ok: true,
+      requestId,
+      blockReasons: Array.isArray(engineDecision.blockReasons) ? engineDecision.blockReasons : [],
+      marketContext,
+      reasoning: explanation
+    };
     tracePhase("response_sent");
     res.status(200).json(responseObj);
   } catch (error: any) {

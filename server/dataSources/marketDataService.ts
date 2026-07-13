@@ -4,8 +4,17 @@ import { getCachedFastForexTick, getFastForexPrice } from "./fastForex/fastForex
 import { isFastForexConfigured } from "./fastForex/fastForexClient";
 
 let fastForexSyncTimer: ReturnType<typeof setInterval> | null = null;
+let fastForexSyncRunId = 0;
+
+async function throttleFastForexSync(ms: number, runId: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(runId === fastForexSyncRunId), ms);
+    timer.unref?.();
+  });
+}
 
 async function syncAllFastForexPrices() {
+  const runId = fastForexSyncRunId;
   let symbolsStr = process.env.FASTFOREX_SYMBOLS_FOREX || "EUR/USD,GBP/USD,USD/JPY,EUR/GBP,AUD/USD,USD/CAD";
   if (symbolsStr.includes("FASTFOREX_SYMBOLS_FOREX=")) {
     symbolsStr = symbolsStr.replace("FASTFOREX_SYMBOLS_FOREX=", "");
@@ -17,9 +26,11 @@ async function syncAllFastForexPrices() {
   const allSymbols = [...symbolsStr.split(","), ...cryptoStr.split(",")].map(s => s.trim()).filter(Boolean);
   
   for (const sym of allSymbols) {
+    if (runId !== fastForexSyncRunId) return;
     await getFastForexPrice(sym);
     // basic throttle
-    await new Promise(r => setTimeout(r, 1600));
+    const shouldContinue = await throttleFastForexSync(1600, runId);
+    if (!shouldContinue) return;
   }
 }
 
@@ -27,6 +38,7 @@ export function startFastForexSync() {
   if (fastForexSyncTimer) return;
   if (!isFastForexConfigured()) return;
 
+  fastForexSyncRunId++;
   console.log("[MarketData] Initializing real-time FastForex price sync...");
   syncAllFastForexPrices().catch(() => {});
   fastForexSyncTimer = setInterval(() => {
@@ -37,6 +49,7 @@ export function startFastForexSync() {
 }
 
 export function stopFastForexSync() {
+  fastForexSyncRunId++;
   if (!fastForexSyncTimer) return;
   clearInterval(fastForexSyncTimer);
   fastForexSyncTimer = null;
