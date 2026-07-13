@@ -183,6 +183,8 @@ app.get("/api/market/status", (req, res) => {
     res.json({
       configured: true,
       hasApiKey: true,
+      environment: process.env.NODE_ENV === "production" ? "production" : (process.env.NODE_ENV === "test" ? "test" : "preview"),
+      mocked: false,
       provider: "fastforex",
       symbols: [...symbolsForex, ...symbolsCrypto],
       connected: health.isConnected,
