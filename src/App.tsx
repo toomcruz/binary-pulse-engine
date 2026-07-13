@@ -2055,9 +2055,12 @@ export default function App() {
           playSignalSound(simulatedSignal.signal);
         }
         
-      } catch (err) {
-        console.warn(`Erro na varredura para ${asset.symbol}:`, err);
-        // Se qualquer um falhar, marcar ativo como NEUTRAL/BLOQUEADO
+      } catch (err: unknown) {
+        // Preserve full ApiErrorDetails per asset; other assets are not cancelled.
+        const details = normalizeApiError(err, { endpoint: "/api/analyze-market", method: "POST" });
+        console.warn(`[Varredura] ${asset.symbol}:`, details);
+        setSweepAssetErrors(prev => ({ ...prev, [asset.symbol]: details }));
+        // Fallback: keep asset visible as NEUTRAL/BLOQUEADO so scan proceeds.
         const fallbackPrice = asset.basePrice;
         results[i] = {
           ...results[i],
