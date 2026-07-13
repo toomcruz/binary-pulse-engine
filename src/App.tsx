@@ -3191,7 +3191,7 @@ export default function App() {
                       <span className="text-[9px] text-slate-500 block uppercase">Prob. Estatística</span>
                       <span className={`text-sm font-mono font-bold ${isFastForexOperational ? 'text-emerald-400' : 'text-slate-600'}`}>
                         {isFastForexOperational ? 
-                          (activeSignal.calibrationAvailable && activeSignal.calibratedProbability !== null && activeSignal.calibratedProbability !== undefined ? `${activeSignal.calibratedProbability}%` : "Indisponível")
+                          (activeSignal.calibrationAvailable && activeSignal.calibratedProbability !== null && activeSignal.calibratedProbability !== undefined ? formatPercent(activeSignal.calibratedProbability) : "Indisponível")
                           : "N/A"}
                       </span>
                     </div>
