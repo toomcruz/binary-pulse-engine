@@ -12,6 +12,8 @@ import { getMassiveConfig } from './server/dataSources/massive/massiveClient';
 import { getLatestMassiveTick } from './server/dataSources/massive/massivePrice';
 import { fetchMassiveCandles } from './server/dataSources/massive/massiveCandles';
 import { runBackstageReplay } from './server/backstageReplay';
+import { getAnalyzeMarketDataProvider, setAnalyzeMarketDataProvider } from './server/dataSources/marketDataProvider';
+import { isFastForexTimeoutError } from './server/dataSources/fastForex/fetchWithTimeout';
 import {
   getFastForexCandles,
   getBackstageCandles
@@ -32,6 +34,64 @@ import { MarketContext, Candle } from "./server/types";
 import { resetCalibrationSession } from "./server/calibration";
 
 const app = express();
+
+type AnalyzePhase =
+  | "request_received"
+  | "payload_validated"
+  | "market_context_created"
+  | "price_fetch_started"
+  | "price_fetch_finished"
+  | "candles_fetch_started"
+  | "candles_fetch_finished"
+  | "candles_mapped"
+  | "indicators_calculated"
+  | "engine_started"
+  | "engine_finished"
+  | "formatter_started"
+  | "formatter_finished"
+  | "response_sent"
+  | "request_failed";
+
+function shouldTraceAnalyzeMarket(): boolean {
+  return process.env.NODE_ENV === "test" || process.env.DEBUG_ANALYZE_MARKET === "true";
+}
+
+function createAnalyzeRequestId(): string {
+  return `analyze-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createAnalyzePhaseTracker(requestId: string) {
+  let lastPhaseAt = Date.now();
+
+  return (phase: AnalyzePhase) => {
+    if (!shouldTraceAnalyzeMarket()) return;
+    const now = Date.now();
+    console.info("[ANALYZE_PHASE]", {
+      requestId,
+      phase,
+      durationMs: now - lastPhaseAt
+    });
+    lastPhaseAt = now;
+  };
+}
+
+function sendMarketDataTimeout(res: express.Response, requestId: string) {
+  return res.status(504).json({
+    ok: false,
+    error: "MARKET_DATA_TIMEOUT",
+    message: "Tempo limite ao obter dados de mercado",
+    requestId
+  });
+}
+
+function sendMarketDataUnavailable(res: express.Response, requestId: string, message: string) {
+  return res.status(503).json({
+    ok: false,
+    error: "MARKET_DATA_UNAVAILABLE",
+    message,
+    requestId
+  });
+}
 
 // Initialize OANDA Streaming
 initMarketDataService();
@@ -545,6 +605,10 @@ app.post("/api/backstage-scan-all", async (req, res) => {
 });
 
 app.post("/api/analyze-market", async (req, res) => {
+  const requestId = createAnalyzeRequestId();
+  const tracePhase = createAnalyzePhaseTracker(requestId);
+  tracePhase("request_received");
+
   try {
     let { asset, timeframe, currentPrice, candles, indicators, strategy, precisionLevel, consecutiveLossCount, isBackground, marketContext } = req.body;
     if (!marketContext) { marketContext = { newsRisk: 'LOW', session: 'OVERLAP', minutesToHighImpactNews: 120 }; }
@@ -553,7 +617,8 @@ app.post("/api/analyze-market", async (req, res) => {
     const allowedExecutionModes = ["live", "paper_trading", "backstage", "debug"];
     const requestedExecutionMode = marketContext.executionMode || "live";
     if (!allowedExecutionModes.includes(requestedExecutionMode)) {
-      return res.status(400).json({ error: "INVALID_EXECUTION_MODE" });
+      tracePhase("request_failed");
+      return res.status(400).json({ error: "INVALID_EXECUTION_MODE", requestId });
     }
     marketContext.executionMode = requestedExecutionMode;
 
@@ -572,22 +637,38 @@ app.post("/api/analyze-market", async (req, res) => {
       "fvg"
     ];
     if (!allowedStrategies.includes(selectedStrategy)) {
-      return res.status(400).json({ error: "INVALID_STRATEGY_MODE" });
+      tracePhase("request_failed");
+      return res.status(400).json({ error: "INVALID_STRATEGY_MODE", requestId });
     }
     marketContext.strategyMode = selectedStrategy;
 
+    const symbolStr = typeof asset === "object" && asset !== null ? (asset as any).symbol || "" : String(asset);
+    const granularity = (timeframe === "1min" || timeframe === "M1") ? "M1" : "M5";
+
+    if (!symbolStr || !timeframe || !currentPrice) {
+      tracePhase("request_failed");
+      res.status(400).json({ error: "Missing required parameters.", requestId });
+      return;
+    }
+
+    tracePhase("payload_validated");
+
     // INTEGRATION WITH REAL-TIME FEEDS (FASTFOREX)
-    const provider = "fastforex";
+    const marketDataProvider = getAnalyzeMarketDataProvider();
+    const provider = marketDataProvider.id;
     
     let tick = null;
     let health = null;
 
+    tracePhase("market_context_created");
+
     if (provider === "fastforex") {
       const isFastForex = !!process.env.FASTFOREX_API_KEY;
       if (isFastForex) {
-        const symbolStr = typeof asset === "object" && asset !== null ? asset.symbol || "" : String(asset);
-        tick = getLatestTick(symbolStr);
-        health = getMarketDataHealth(symbolStr);
+        tracePhase("price_fetch_started");
+        tick = await marketDataProvider.getPrice(symbolStr);
+        tracePhase("price_fetch_finished");
+        health = marketDataProvider.getHealth(symbolStr);
         const isFastForexOperational = tick &&
                                      tick.provider === "fastforex" &&
                                      (tick.source === "fastforex_rest" || tick.source === "fastforex_stream") &&
@@ -598,61 +679,26 @@ app.post("/api/analyze-market", async (req, res) => {
                                      !health.isStaleData &&
                                      health.dataAgeMs !== null && health.dataAgeMs <= 45000;
         if (!isFastForexOperational) {
-           return res.json({ 
-             signal: "NEUTRAL",
-             technicalScore: 0,
-        calibratedProbability: null,
-        calibrationAvailable: false,
-             strategy: strategy || "reversion",
-             reasoning: ["VETO: market_data_unavailable_or_stale - FastForex indisponível ou stale."],
-             error: "FASTFOREX_NOT_OPERATIONAL", 
-             errorMsg: "VETO: market_data_unavailable_or_stale - FastForex indisponível ou stale.",
-             message: "VETO: market_data_unavailable_or_stale - FastForex indisponível ou stale.",
-             marketContext: {
-               configured: true,
-               priceProvider: "fastforex",
-               dataSourceType: "fastforex_rest",
-               isStaleData: true,
-               dataAgeMs: health ? health.dataAgeMs : null
-             },
-             health
-           });
+           tracePhase("request_failed");
+           return sendMarketDataUnavailable(res, requestId, "FastForex indisponível ou stale.");
         }
       } else {
-        return res.json({
-          signal: "NEUTRAL",
-          technicalScore: 0,
-        calibratedProbability: null,
-        calibrationAvailable: false,
-          strategy: strategy || "reversion",
-          reasoning: ["Operação bloqueada: FastForex não está configurado."],
-          error: "MARKET_DATA_NOT_CONFIGURED",
-          errorMsg: "MARKET_DATA_NOT_CONFIGURED",
-          message: "Operação bloqueada: FastForex não está configurado.",
-          marketContext: {
-            configured: false,
-            priceProvider: "fastforex",
-            isStaleData: true
-          }
-        });
+        tracePhase("request_failed");
+        return sendMarketDataUnavailable(res, requestId, "Operação bloqueada: FastForex não está configurado.");
+      }
+    } else if (provider === "test") {
+      tracePhase("price_fetch_started");
+      tick = await marketDataProvider.getPrice(symbolStr);
+      tracePhase("price_fetch_finished");
+      health = marketDataProvider.getHealth(symbolStr);
+
+      if (!tick || !health || health.isStaleData) {
+        tracePhase("request_failed");
+        return sendMarketDataUnavailable(res, requestId, "Provedor de dados de mercado indisponível.");
       }
     } else {
-       return res.json({
-          signal: "NEUTRAL",
-          technicalScore: 0,
-        calibratedProbability: null,
-        calibrationAvailable: false,
-          strategy: strategy || "reversion",
-          reasoning: ["Operação bloqueada: Apenas FastForex é suportado operacionalmente."],
-          error: "MARKET_DATA_NOT_SUPPORTED",
-          errorMsg: "MARKET_DATA_NOT_SUPPORTED",
-          message: "Apenas FastForex é suportado.",
-          marketContext: {
-            configured: false,
-            priceProvider: "unknown",
-            isStaleData: true
-          }
-       });
+       tracePhase("request_failed");
+       return sendMarketDataUnavailable(res, requestId, "Provedor de dados de mercado não suportado.");
     }
     
     if (tick && health && !health.isStaleData) {
@@ -665,12 +711,12 @@ app.post("/api/analyze-market", async (req, res) => {
         
         const cleanSym = (typeof asset === "object" && asset !== null ? asset.symbol || "" : String(asset)).toUpperCase();
         if (isCryptoSymbol(cleanSym)) {
-          marketContext.priceProvider = "fastforex";
+          marketContext.priceProvider = provider;
           marketContext.candleProvider = "binance";
           marketContext.dataSourceMode = "hybrid";
         } else {
-          marketContext.priceProvider = "fastforex";
-          marketContext.candleProvider = "fastforex";
+          marketContext.priceProvider = provider;
+          marketContext.candleProvider = provider;
           marketContext.dataSourceMode = "single";
         }
 
@@ -711,17 +757,12 @@ app.post("/api/analyze-market", async (req, res) => {
       }
     }
 
-    const symbolStr = typeof asset === "object" && asset !== null ? (asset as any).symbol || "" : String(asset);
-    if (!symbolStr || !timeframe || !currentPrice) {
-      res.status(400).json({ error: "Missing required parameters." });
-      return;
-    }
-
     // FETCH REAL AND VALIDATED CANDLES DIRECTLY FROM FASTFOREX
     let finalCandles: Candle[] = [];
     try {
-      const granularity = (timeframe === "1min" || timeframe === "M1") ? "M1" : "M5";
-      const realMarketCandles = await getFastForexCandles(symbolStr, granularity, 110);
+      tracePhase("candles_fetch_started");
+      const realMarketCandles = await marketDataProvider.getCandles(symbolStr, granularity, 110);
+      tracePhase("candles_fetch_finished");
       
       if (realMarketCandles && realMarketCandles.length > 0) {
         const mappedCandles: Candle[] = realMarketCandles.map(rc => ({
@@ -736,12 +777,14 @@ app.post("/api/analyze-market", async (req, res) => {
           provider: rc.provider,
           source: rc.source
         }));
+        tracePhase("candles_mapped");
         
         // Filter out incomplete/active candles using the strict closed-candle checks
         const closedCandles = mappedCandles.filter(c => isClosedCandle(c, granularity, Date.now()));
         
         // Enrich candles with real-time computed technical indicators
         finalCandles = populateIndicators(closedCandles);
+        tracePhase("indicators_calculated");
         
         if (marketContext) {
           // Closed candles analysis, do not include incomplete active candle
@@ -751,23 +794,12 @@ app.post("/api/analyze-market", async (req, res) => {
         throw new Error("No real candles returned from FastForex Candles API.");
       }
     } catch (candlesErr: any) {
+      tracePhase("request_failed");
+      if (isFastForexTimeoutError(candlesErr)) {
+        return sendMarketDataTimeout(res, requestId);
+      }
       console.error("[FastForex] Real Candles retrieval failed. Overriding to Neutral. Error:", candlesErr);
-      return res.json({
-        signal: "NEUTRAL",
-        technicalScore: 0,
-        calibratedProbability: null,
-        calibrationAvailable: false,
-        strategy: strategy || "reversion",
-        reasoning: ["VETO: real_candles_unavailable - Falha ao recuperar candles históricos reais da FastForex."],
-        error: "REAL_CANDLES_UNAVAILABLE",
-        errorMsg: "VETO: real_candles_unavailable - Falha ao recuperar candles históricos reais.",
-        message: "Falha ao carregar dados históricos de candle.",
-        marketContext: {
-          configured: true,
-          priceProvider: "fastforex",
-          isStaleData: true
-        }
-      });
+      return sendMarketDataUnavailable(res, requestId, "Falha ao carregar dados históricos de candle.");
     }
 
     const candlesCount = finalCandles.length;
@@ -876,6 +908,7 @@ app.post("/api/analyze-market", async (req, res) => {
     } else {
       marketContext.executionMode = "live";
     }
+    tracePhase("engine_started");
     const engineDecision = simulateAnalysis(
       symbolStr,
       timeframe,
@@ -888,6 +921,7 @@ app.post("/api/analyze-market", async (req, res) => {
       lossCountNum,
       marketContext
     );
+    tracePhase("engine_finished");
 
     const calibrationThreshold = req.body.calibrationThreshold !== undefined ? Number(req.body.calibrationThreshold) : null;
     if (calibrationThreshold !== null && (engineDecision.signal === "CALL" || engineDecision.signal === "PUT")) {
@@ -909,8 +943,8 @@ app.post("/api/analyze-market", async (req, res) => {
         
         satisfiesCallPutRules = 
           !!marketContext &&
-          marketContext.priceProvider === "fastforex" &&
-          (marketContext.dataSourceType === "fastforex_rest" || marketContext.dataSourceType === "fastforex_stream") &&
+          (marketContext.priceProvider === "fastforex" || marketContext.priceProvider === "test") &&
+          (marketContext.dataSourceType === "fastforex_rest" || marketContext.dataSourceType === "fastforex_stream" || marketContext.dataSourceType === "deterministic_fixture") &&
           marketContext.isSyntheticData === false &&
           !isStale &&
           !spreadIsTooHigh &&
@@ -942,12 +976,19 @@ app.post("/api/analyze-market", async (req, res) => {
     }
     console.log("===================================================================\n");
 
+    tracePhase("formatter_started");
     const explanation = await formatDecisionWithGemini(engineDecision);
-    const responseObj = { ...engineDecision, marketContext, reasoning: explanation };
+    tracePhase("formatter_finished");
+    const responseObj = { ...engineDecision, ok: true, requestId, marketContext, reasoning: explanation };
+    tracePhase("response_sent");
     res.status(200).json(responseObj);
   } catch (error: any) {
+    tracePhase("request_failed");
+    if (isFastForexTimeoutError(error)) {
+      return sendMarketDataTimeout(res, requestId);
+    }
     console.error("Error in /api/analyze-market:", error);
-    res.status(500).json({ error: "Failed to analyze market data.", details: error.message });
+    res.status(500).json({ ok: false, error: "ANALYSIS_FAILED", message: error.message || "Failed to analyze market data.", requestId });
   }
 });
 
@@ -1502,4 +1543,4 @@ if (process.env.TEST_ENV !== "true") {
   startServer();
 }
 
-export { app };
+export { app, setAnalyzeMarketDataProvider };
