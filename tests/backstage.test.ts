@@ -162,11 +162,10 @@ test('Dataset Hashing', (t) => {
     assert.ok(res1.results.length > 0, "O dataset deve gerar pelo menos 1 sinal decidido para validar o determinismo completo.");
 });
 
-test('Backstage replay uses next candle open for entry and next candle close for expiry', () => {
-    const candles = makeReplayCandles();
-    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles });
+function assertBackstageReplayNextCandlePricingAndExpiry(timeframe: "M1" | "M5", candles: Candle[], expectedExpiryMs: number) {
+    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe, strategy: "all", candles });
 
-    assert.ok(replay.results.length > 0, "dataset must generate validation signals");
+    assert.ok(replay.results.length > 0, `dataset must generate ${timeframe} validation signals`);
     const signal = replay.results[0];
     const signalIndex = candles.findIndex(c => c.time === signal.timestamp);
     const nextCandle = candles[signalIndex + 1];
@@ -175,7 +174,18 @@ test('Backstage replay uses next candle open for entry and next candle close for
     assert.strictEqual(signal.entryPrice, nextCandle.open);
     assert.strictEqual(signal.exitPrice, nextCandle.close);
     assert.strictEqual(signal.entryTimestamp, nextCandle.time);
-    assert.strictEqual(signal.expiryTimestamp, nextCandle.time);
+    assert.strictEqual(
+        new Date(signal.expiryTimestamp).getTime() - new Date(signal.entryTimestamp).getTime(),
+        expectedExpiryMs
+    );
+}
+
+test('Backstage replay M1 uses next candle prices and expires exactly 60 seconds after entry', () => {
+    assertBackstageReplayNextCandlePricingAndExpiry("M1", makeReplayCandles(), 60000);
+});
+
+test('Backstage replay M5 uses next candle prices and expires exactly 300 seconds after entry', () => {
+    assertBackstageReplayNextCandlePricingAndExpiry("M5", toM5(makeReplayCandles()), 300000);
 });
 
 test('Backstage replay rejects M1 expiry gaps without calculating validation result', () => {
