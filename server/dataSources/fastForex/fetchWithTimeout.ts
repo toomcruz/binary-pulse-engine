@@ -7,6 +7,15 @@ export class FastForexRequestTimeoutError extends Error {
   }
 }
 
+export class FastForexRequestAbortError extends Error {
+  code = "MARKET_DATA_ABORTED";
+
+  constructor(message = "Requisição de dados de mercado cancelada") {
+    super(message);
+    this.name = "FastForexRequestAbortError";
+  }
+}
+
 export function getFastForexTimeoutMs(): number {
   const rawTimeout = process.env.FASTFOREX_TIMEOUT_MS;
   const parsed = rawTimeout ? Number(rawTimeout) : NaN;
@@ -35,7 +44,26 @@ export async function fetchWithTimeout(
   assertFastForexNetworkAllowed(url);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let abortReason: "timeout" | "external" | null = null;
+
+  const externalSignal = options.signal;
+  if (externalSignal?.aborted) {
+    throw new FastForexRequestAbortError();
+  }
+
+  const abortFromExternalSignal = () => {
+    if (abortReason) return;
+    abortReason = "external";
+    controller.abort(externalSignal?.reason);
+  };
+
+  externalSignal?.addEventListener("abort", abortFromExternalSignal, { once: true });
+
+  const timer = setTimeout(() => {
+    if (abortReason) return;
+    abortReason = "timeout";
+    controller.abort();
+  }, timeoutMs);
   timer.unref?.();
 
   try {
@@ -45,14 +73,22 @@ export async function fetchWithTimeout(
     });
   } catch (error) {
     if ((error as Error).name === "AbortError") {
+      if (abortReason === "external") {
+        throw new FastForexRequestAbortError();
+      }
       throw new FastForexRequestTimeoutError();
     }
     throw error;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", abortFromExternalSignal);
   }
 }
 
 export function isFastForexTimeoutError(error: unknown): boolean {
   return error instanceof FastForexRequestTimeoutError || (error as { code?: string } | null)?.code === "MARKET_DATA_TIMEOUT";
+}
+
+export function isFastForexAbortError(error: unknown): boolean {
+  return error instanceof FastForexRequestAbortError || (error as { code?: string } | null)?.code === "MARKET_DATA_ABORTED";
 }
