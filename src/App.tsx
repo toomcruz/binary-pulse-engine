@@ -3183,7 +3183,7 @@ export default function App() {
                     <div className="h-6 w-[1px] bg-slate-800"></div>
                     <div className="text-center px-2">
                       <span className="text-[9px] text-slate-500 block uppercase">Qualidade técnica</span>
-                      <span className={`text-sm font-mono font-bold ${isFastForexOperational ? 'text-indigo-400' : 'text-slate-600'}`}>{isFastForexOperational ? `${activeSignal.technicalScore ?? 0}/100` : "N/A"}</span>
+                      <span className={`text-sm font-mono font-bold ${isFastForexOperational ? 'text-indigo-400' : 'text-slate-600'}`}>{isFastForexOperational ? `${formatScore(activeSignal.technicalScore)}/100` : "N/A"}</span>
                     </div>
                     
                     <div className="h-6 w-[1px] bg-slate-800"></div>
