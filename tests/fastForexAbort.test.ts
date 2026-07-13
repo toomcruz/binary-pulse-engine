@@ -179,3 +179,117 @@ test('getBackstageCandles preserves normal FastForex pagination when no signal i
     globalThis.fetch = originalFetch;
   }
 });
+
+test('getBackstageCandles preserves MARKET_DATA_ABORTED for external cancellation during Binance pagination', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalCryptoSymbols = process.env.FASTFOREX_SYMBOLS_CRYPTO;
+  process.env.NODE_ENV = 'production';
+  process.env.FASTFOREX_SYMBOLS_CRYPTO = 'BTC/USD';
+  const controller = new AbortController();
+
+  globalThis.fetch = async (_input: string | URL | Request, init?: RequestInit) => {
+    return await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      controller.abort();
+    });
+  };
+
+  try {
+    const { getBackstageCandles } = await import('../server/dataSources/fastForex/fastForexCandles');
+    await assert.rejects(getBackstageCandles('BTC/USD', 'M1', 2000, controller.signal), (error: any) => {
+      assert.equal(error.code, 'MARKET_DATA_ABORTED');
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NODE_ENV = originalNodeEnv;
+    if (originalCryptoSymbols === undefined) delete process.env.FASTFOREX_SYMBOLS_CRYPTO;
+    else process.env.FASTFOREX_SYMBOLS_CRYPTO = originalCryptoSymbols;
+  }
+});
+
+test('getBackstageCandles preserves MARKET_DATA_TIMEOUT for internal Binance pagination timeout', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalTimeout = process.env.FASTFOREX_TIMEOUT_MS;
+  const originalCryptoSymbols = process.env.FASTFOREX_SYMBOLS_CRYPTO;
+  process.env.NODE_ENV = 'production';
+  process.env.FASTFOREX_TIMEOUT_MS = '5';
+  process.env.FASTFOREX_SYMBOLS_CRYPTO = 'BTC/USD';
+
+  globalThis.fetch = async (_input: string | URL | Request, init?: RequestInit) => {
+    return await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    });
+  };
+
+  try {
+    const { getBackstageCandles } = await import('../server/dataSources/fastForex/fastForexCandles');
+    await assert.rejects(getBackstageCandles('BTC/USD', 'M1', 2000), (error: any) => {
+      assert.equal(error.code, 'MARKET_DATA_TIMEOUT');
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.NODE_ENV = originalNodeEnv;
+    if (originalTimeout === undefined) delete process.env.FASTFOREX_TIMEOUT_MS;
+    else process.env.FASTFOREX_TIMEOUT_MS = originalTimeout;
+    if (originalCryptoSymbols === undefined) delete process.env.FASTFOREX_SYMBOLS_CRYPTO;
+    else process.env.FASTFOREX_SYMBOLS_CRYPTO = originalCryptoSymbols;
+  }
+});
+
+test('getBackstageCandles rejects whole FastForex operation when a later page fails', async () => {
+  const allResults = Array.from({ length: 150 }, (_, index) => makeResult(index));
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+
+  globalThis.fetch = async (input: string | URL | Request) => {
+    requestCount++;
+    if (requestCount === 2) {
+      return new Response(JSON.stringify({ error: 'temporary provider failure' }), { status: 503 });
+    }
+    const page = pageForUrl(input, allResults);
+    return new Response(JSON.stringify({ results: page }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  try {
+    const { getBackstageCandles } = await import('../server/dataSources/fastForex/fastForexCandles');
+    await assert.rejects(getBackstageCandles('EUR/USD', 'M1', 150), (error: Error) => {
+      assert.equal(error.message, 'BACKSTAGE_CANDLES_PAGE_FAILED');
+      return true;
+    });
+    assert.equal(requestCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('getBackstageCandles allows natural FastForex history end after accumulated data', async () => {
+  const allResults = Array.from({ length: 100 }, (_, index) => makeResult(index));
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+
+  globalThis.fetch = async (input: string | URL | Request) => {
+    requestCount++;
+    const page = requestCount === 1 ? pageForUrl(input, allResults) : [];
+    return new Response(JSON.stringify({ results: page }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  try {
+    const { getBackstageCandles } = await import('../server/dataSources/fastForex/fastForexCandles');
+    const { candles, metrics } = await getBackstageCandles('EUR/USD', 'M1', 150);
+    assert.equal(candles.length, 100);
+    assert.equal(metrics.uniqueCandlesReceived, 100);
+    assert.equal(requestCount, 3, 'two empty pages confirm natural end without provider failure');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

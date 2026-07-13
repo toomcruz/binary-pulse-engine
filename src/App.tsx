@@ -42,6 +42,7 @@ import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPe
 import { createBackstageEconomicMetricsRecord, buildBackstageReplayEconomicContext, buildBackstageReplayPayload, getBackstageEconomicMetricsForContext, formatReplayEconomicMetric, translateEconomicStatus, type ReplayEconomicMetrics } from "./lib/backstageEconomics";
 import { apiRequest, ApiRequestError, normalizeApiError, type ApiErrorDetails } from "./lib/apiClient";
 import { ApiErrorBanner } from "./components/ApiErrorBanner";
+import { formatBackstageScannerError } from "./lib/backstageScanner";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
@@ -1793,7 +1794,7 @@ export default function App() {
     a.href = url;
     a.download = `backstage-report-${selectedAsset.symbol}-${new Date().getTime()}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const runBackstageScannerAction = async () => {
@@ -1813,14 +1814,7 @@ export default function App() {
       if (!response.ok) {
         let payload: any = null;
         try { payload = await response.json(); } catch {}
-        if (response.status === 409) throw new Error("Já existe uma varredura geral em andamento. Aguarde a execução atual terminar.");
-        if (response.status === 429) {
-          const retryAfterMs = Number(payload?.retryAfterMs || 0);
-          const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
-          throw new Error(`Cooldown ativo. Tente novamente em aproximadamente ${seconds}s.`);
-        }
-        if (response.status === 504) throw new Error("A varredura geral excedeu o tempo limite. Tente novamente após o cooldown.");
-        throw new Error(payload?.message || payload?.error || "Erro ao executar Backstage Scanner Geral");
+        throw new Error(formatBackstageScannerError(response.status, payload));
       }
 
       const data = await response.json();

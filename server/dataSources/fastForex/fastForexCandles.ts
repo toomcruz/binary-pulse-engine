@@ -331,8 +331,11 @@ export async function getBackstageCandles(
         metrics.oldestTimestamp = oldestTs;
         metrics.newestTimestamp = sortedTimestamps[sortedTimestamps.length - 1];
         currentEndTime = oldestTs - 1;
-      } catch(e) {
-        throw Object.assign(new Error("BACKSTAGE_CANDLES_PAGE_FAILED"), { cause: e });
+      } catch(error) {
+        if (isFastForexAbortError(error) || isFastForexTimeoutError(error)) {
+          throw error;
+        }
+        throw Object.assign(new Error("BACKSTAGE_CANDLES_PAGE_FAILED"), { cause: error });
       }
     }
     metrics.uniqueCandlesReceived = allM1.size;
