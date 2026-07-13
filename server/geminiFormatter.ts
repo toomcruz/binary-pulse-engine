@@ -136,7 +136,8 @@ function fallbackFormatter(decision: any): string[] {
     lines.push(`MOTIVO DO BLOQUEIO: ${decision.blockReasons.join(" | ")}`);
   }
   if (decision.gateStatus === "BLOCKED") {
-    lines.push(`INTEGRIDADE BLOQUEADA: ${decision.reasons.join(" | ")}`);
+    const integrityReasons = Array.isArray(decision.reasons) ? decision.reasons : [];
+    lines.push(`INTEGRIDADE BLOQUEADA: ${integrityReasons.join(" | ")}`);
   }
   
   return lines;
