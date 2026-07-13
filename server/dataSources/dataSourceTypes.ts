@@ -9,6 +9,7 @@ export type DataSourceType =
   | "massive_stream"
   | "fastforex_rest"
   | "fastforex_stream"
+  | "deterministic_fixture"
   | "unknown";
 
 export interface MarketCandle {
@@ -21,7 +22,7 @@ export interface MarketCandle {
   volume?: number;
   complete: boolean;
   source: DataSourceType;
-  provider: "oanda" | "twelvedata" | "tradingview" | "synthetic" | "massive" | "fastforex" | "unknown";
+  provider: "oanda" | "twelvedata" | "tradingview" | "synthetic" | "massive" | "fastforex" | "test" | "unknown";
   instrument: string;
   granularity: "M1" | "M5" | "S5" | "S10" | "S15" | "M15" | "M30" | "H1";
   priceType: "mid" | "bid" | "ask";
@@ -35,12 +36,12 @@ export interface MarketTick {
   time: string;
   timestamp: number;
   source: DataSourceType;
-  provider: "oanda" | "twelvedata" | "tradingview" | "synthetic" | "massive" | "fastforex" | "unknown";
+  provider: "oanda" | "twelvedata" | "tradingview" | "synthetic" | "massive" | "fastforex" | "test" | "unknown";
   receivedAt?: number;
 }
 
 export interface MarketDataHealth {
-  provider: "oanda" | "twelvedata" | "tradingview" | "synthetic" | "massive" | "fastforex" | "unknown";
+  provider: "oanda" | "twelvedata" | "tradingview" | "synthetic" | "massive" | "fastforex" | "test" | "unknown";
   dataSourceType: DataSourceType;
   isConnected: boolean;
   lastRealTickAt?: number | null;
