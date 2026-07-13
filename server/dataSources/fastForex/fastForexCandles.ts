@@ -1,7 +1,13 @@
 import { MarketCandle } from "../dataSourceTypes";
 import { getFastForexApiKey, getFastForexBaseUrl, isFastForexConfigured, normalizeSymbolToFastForex, isCryptoSymbol } from "./fastForexClient";
-import { fetchWithTimeout, isFastForexTimeoutError } from "./fetchWithTimeout";
+import { FastForexRequestAbortError, fetchWithTimeout, isFastForexAbortError, isFastForexTimeoutError } from "./fetchWithTimeout";
 import { mapFastForexTimeSeriesToCandles } from "./fastForexMapper";
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new FastForexRequestAbortError();
+  }
+}
 
 export interface M5AggregationMetrics {
   m1Received: number;
@@ -102,12 +108,12 @@ export function aggregateM1ToM5Strict(m1Candles: MarketCandle[]): { candles: Mar
 
 
 
-async function fetchBinanceM1Batch(symbol: string, limit: number, endTime?: number): Promise<MarketCandle[]> {
+async function fetchBinanceM1Batch(symbol: string, limit: number, endTime?: number, signal?: AbortSignal): Promise<MarketCandle[]> {
   const binanceSymbol = symbol.replace("/", "").replace("USD", "USDT");
   let url = `https://api.binance.us/api/v3/klines?symbol=${binanceSymbol}&interval=1m&limit=${limit}`;
   if (endTime) url += `&endTime=${endTime}`;
   
-  const response = await fetchWithTimeout(url);
+  const response = await fetchWithTimeout(url, { signal });
   if (!response.ok) throw new Error("BINANCE_API_ERROR");
   
   const data = await response.json();
@@ -138,7 +144,8 @@ export async function getFastForexCandles(
   timeframe: "M1" | "M5",
   limit: number = 100,
   start?: string | number,
-  end?: string | number
+  end?: string | number,
+  signal?: AbortSignal
 ): Promise<MarketCandle[] | null> {
   try {
     if (!isFastForexConfigured() && !isCryptoSymbol(symbol)) {
@@ -156,7 +163,8 @@ export async function getFastForexCandles(
         while (allM1Candles.length < targetM1Candles) {
           const remaining = targetM1Candles - allM1Candles.length;
           const fetchLimit = Math.min(1000, remaining); // Binance limit is 1000
-          const batch = await fetchBinanceM1Batch(symbol, fetchLimit, currentEndTime);
+          throwIfAborted(signal);
+          const batch = await fetchBinanceM1Batch(symbol, fetchLimit, currentEndTime, signal);
           if (batch.length === 0) break;
           allM1Candles = [...batch, ...allM1Candles];
           const unique = new Map<number, MarketCandle>();
@@ -192,7 +200,8 @@ export async function getFastForexCandles(
       if (start) url += `&start=${encodeURIComponent(start.toString())}`;
       if (currentEnd) url += `&end=${encodeURIComponent(currentEnd.toString())}`;
 
-      const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" } });
+      throwIfAborted(signal);
+      const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" }, signal });
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "");
@@ -247,7 +256,7 @@ export async function getFastForexCandles(
     return allM1Candles.slice(-limit);
 
   } catch (error) {
-    if (isFastForexTimeoutError(error)) {
+    if (isFastForexTimeoutError(error) || isFastForexAbortError(error)) {
       throw error;
     }
     console.error(`[FastForex] Error fetching candles for ${symbol}:`, error);
@@ -270,7 +279,8 @@ export interface BackstagePaginationMetrics {
 export async function getBackstageCandles(
   symbol: string,
   timeframe: "M1" | "M5",
-  targetCandles: number = 2000
+  targetCandles: number = 2000,
+  signal?: AbortSignal
 ): Promise<{ candles: MarketCandle[], metrics: BackstagePaginationMetrics }> {
   const isCrypto = isCryptoSymbol(symbol);
   if (!isFastForexConfigured() && !isCrypto) {
@@ -297,7 +307,8 @@ export async function getBackstageCandles(
       const fetchLimit = Math.min(1000, targetM1 - allM1.size);
       metrics.batchesFetched++;
       try {
-        const batch = await fetchBinanceM1Batch(symbol, fetchLimit, currentEndTime);
+        throwIfAborted(signal);
+        const batch = await fetchBinanceM1Batch(symbol, fetchLimit, currentEndTime, signal);
         if (batch.length === 0) {
            consecutiveEmptyBatches++;
            if (consecutiveEmptyBatches >= 2) break;
@@ -321,6 +332,7 @@ export async function getBackstageCandles(
         metrics.newestTimestamp = sortedTimestamps[sortedTimestamps.length - 1];
         currentEndTime = oldestTs - 1;
       } catch(e) {
+        if (isFastForexAbortError(e) || isFastForexTimeoutError(e)) throw e;
         break;
       }
     }
@@ -352,7 +364,8 @@ export async function getBackstageCandles(
     let url = `${getFastForexBaseUrl()}/fx/ohlc/time-series?pair=${encodeURIComponent(pairStr)}&interval=${intervalStr}&limit=${fetchLimit}&api_key=${getFastForexApiKey()}`;
     if (currentEnd) url += `&end=${encodeURIComponent(currentEnd)}`;
 
-    const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" } });
+    throwIfAborted(signal);
+    const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" }, signal });
     if (!response.ok) {
        console.warn(`[FastForex] API Error ${response.status}`);
        break; // Stop fetching on error, return what we have
@@ -408,4 +421,3 @@ export async function getBackstageCandles(
 
   return { candles: finalM1, metrics };
 }
-
