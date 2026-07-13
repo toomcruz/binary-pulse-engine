@@ -3369,7 +3369,7 @@ export default function App() {
                       {/* Asset & Probability Display */}
                       <div className="w-full text-center z-10 mt-1">
                         <div className="text-xs font-semibold text-slate-300">
-                          SCORE TÉCNICO: {activeSignal.technicalScore ?? 0} | REGIME: {activeSignal.regime?.toUpperCase() || 'N/A'}
+                          SCORE TÉCNICO: {formatScore(activeSignal.technicalScore)} | REGIME: {activeSignal.regime?.toUpperCase() || 'N/A'}
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono mt-0.5 uppercase">
                           SISTEMA DE ALTA FREQUÊNCIA ATIVO
