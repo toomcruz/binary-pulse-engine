@@ -38,7 +38,7 @@ export function getFastForexHealth(instrument?: string): MarketDataHealth {
     if (ticks.length > 0) {
       // Find the most recent tick
       const newestTick = ticks.reduce((prev, current) => {
-        return (prev.receivedAt > current.receivedAt) ? prev : current;
+        return ((prev.receivedAt ?? 0) > (current.receivedAt ?? 0)) ? prev : current;
       });
       if (newestTick && newestTick.receivedAt) {
         lastTickAt = newestTick.receivedAt;
