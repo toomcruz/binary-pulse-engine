@@ -4463,7 +4463,7 @@ export default function App() {
                           {isPut && (
                             <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/30 text-rose-400 px-3 py-1 rounded-xl text-xs font-black">
                               <TrendingDown size={12} className="animate-bounce" />
-                              <span>PUT • {result.signal?.technicalScore}%</span>
+                              <span>PUT • {formatPercent(result.signal?.technicalScore)}</span>
                             </div>
                           )}
                         </div>
