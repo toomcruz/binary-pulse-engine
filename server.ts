@@ -35,6 +35,52 @@ import { resetCalibrationSession } from "./server/calibration";
 
 const app = express();
 
+type BackstageCandlesFetcher = (
+  symbol: string,
+  timeframe: "M1" | "M5",
+  targetCandles?: number,
+  signal?: AbortSignal
+) => ReturnType<typeof getBackstageCandles>;
+
+let backstageScanAllRunning = false;
+let backstageCandlesFetcher: BackstageCandlesFetcher = getBackstageCandles;
+
+function setBackstageScanAllCandlesFetcher(fetcher: BackstageCandlesFetcher | null) {
+  backstageCandlesFetcher = fetcher ?? getBackstageCandles;
+}
+
+function resetBackstageScanAllState() {
+  backstageScanAllRunning = false;
+  backstageCandlesFetcher = getBackstageCandles;
+}
+
+function getBackstageScanAllTimeoutMs(): number {
+  const raw = process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
+  if (!raw) return 60_000;
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+}
+
+function createBackstageScanAllTimeoutError(timeoutMs: number) {
+  return Object.assign(new Error(`Backstage scan exceeded ${timeoutMs}ms timeout`), {
+    code: "BACKSTAGE_SCAN_TIMEOUT"
+  });
+}
+
+function createBackstageScanAllAbortError() {
+  return Object.assign(new Error("Backstage scan cancelled"), {
+    code: "BACKSTAGE_SCAN_CANCELLED"
+  });
+}
+
+function throwIfBackstageScanAllAborted(signal: AbortSignal) {
+  if (signal.aborted) {
+    throw createBackstageScanAllAbortError();
+  }
+}
+
+
 type AnalyzePhase =
   | "request_received"
   | "payload_validated"
@@ -558,9 +604,8 @@ app.post("/api/backstage-replay", async (req, res) => {
   }
 });
 
-app.post("/api/backstage-scan-all", async (req, res) => {
-  try {
-    const assets = ["EUR/USD", "GBP/USD", "USD/JPY", "EUR/GBP", "AUD/USD", "USD/CAD"];
+async function runBackstageScanAll(signal: AbortSignal) {
+  const assets = ["EUR/USD", "GBP/USD", "USD/JPY", "EUR/GBP", "AUD/USD", "USD/CAD"];
     const timeframes = ["M1", "M5"];
     const strategies = ["reversion", "trend", "price_action", "breakout", "candle_flow", "order_block", "liquidity_sweep", "fvg"];
     
@@ -579,21 +624,31 @@ app.post("/api/backstage-scan-all", async (req, res) => {
 
     // Loop through assets and timeframes
     for (const asset of assets) {
+      throwIfBackstageScanAllAborted(signal);
+
       for (const tf of timeframes) {
+        throwIfBackstageScanAllAborted(signal);
         const granularity = tf === "M1" ? "M1" : "M5";
         
         let candles = [];
         try {
-          const { candles: backCandles } = await getBackstageCandles(asset, granularity, 2000);
+          throwIfBackstageScanAllAborted(signal);
+          const { candles: backCandles } = await backstageCandlesFetcher(asset, granularity, 2000, signal);
+          throwIfBackstageScanAllAborted(signal);
           candles = backCandles;
-        } catch (err) {
-          continue; // skip if asset/candles not available
+        } catch (err: any) {
+          if (err?.message === "MARKET_CANDLES_UNAVAILABLE") {
+            continue; // skip if asset/candles not available
+          }
+          throw err;
         }
 
         if (!candles || candles.length < 37) continue;
+        throwIfBackstageScanAllAborted(signal);
         const completeCandles = candles.filter(c => c.complete);
 
         // Run backstage replay with "all" strategies
+        throwIfBackstageScanAllAborted(signal);
         resetCalibrationSession();
         const { results: allSignals } = runBackstageReplay({
           asset,
@@ -601,6 +656,7 @@ app.post("/api/backstage-scan-all", async (req, res) => {
           candles: completeCandles,
           strategy: "all"
         });
+        throwIfBackstageScanAllAborted(signal);
 
         // Group signals by strategy
         for (const strat of strategies) {
@@ -688,7 +744,7 @@ app.post("/api/backstage-scan-all", async (req, res) => {
       bestTimeframe = best.timeframe;
     }
 
-    res.json({
+    return {
       setups: allSetups,
       stats: {
         bestStrategy,
@@ -696,11 +752,59 @@ app.post("/api/backstage-scan-all", async (req, res) => {
         bestAsset,
         bestTimeframe
       }
-    });
+    };
+}
 
+app.post("/api/backstage-scan-all", async (_req, res) => {
+  if (backstageScanAllRunning) {
+    return res.status(409).json({ error: "BACKSTAGE_SCAN_ALREADY_RUNNING" });
+  }
+
+  backstageScanAllRunning = true;
+  const timeoutMs = getBackstageScanAllTimeoutMs();
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+
+  const scanPromise = runBackstageScanAll(controller.signal);
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(createBackstageScanAllTimeoutError(timeoutMs));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+
+  try {
+    const result = await Promise.race([scanPromise, timeoutPromise]);
+    if (!res.headersSent) {
+      res.json(result);
+    }
   } catch (error: any) {
     console.error("Error in /api/backstage-scan-all:", error);
-    res.status(500).json({ error: error.message || "INTERNAL_SERVER_ERROR" });
+    if (error?.code === "BACKSTAGE_SCAN_TIMEOUT") {
+      if (!res.headersSent) {
+        res.status(504).json({
+          error: "BACKSTAGE_SCAN_TIMEOUT",
+          message: `Backstage scan exceeded ${timeoutMs}ms timeout`
+        });
+      }
+
+      try {
+        await scanPromise;
+      } catch (scanError: any) {
+        if (scanError?.code !== "BACKSTAGE_SCAN_CANCELLED") {
+          console.error("Error while cancelling /api/backstage-scan-all:", scanError);
+        }
+      }
+      return;
+    }
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || "INTERNAL_SERVER_ERROR" });
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+    backstageScanAllRunning = false;
   }
 });
 
@@ -1650,4 +1754,4 @@ if (process.env.TEST_ENV !== "true") {
   startServer();
 }
 
-export { app, setAnalyzeMarketDataProvider };
+export { app, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState };
