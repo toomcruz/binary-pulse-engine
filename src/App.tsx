@@ -4080,7 +4080,7 @@ export default function App() {
                           ? "bg-rose-400 shadow-md shadow-rose-500/20" 
                           : "bg-rose-500/50"
                       }`}
-                      style={{ width: `${isFastForexOperational ? Math.min(100, (liveDiagnostics.putScore / liveDiagnostics.requiredScore) * 100) : 0}%` }}
+                      style={{ width: `${isFastForexOperational ? clampPercent(liveDiagnostics.requiredScore > 0 ? (liveDiagnostics.putScore / liveDiagnostics.requiredScore) * 100 : 0) : 0}%` }}
                     />
                   </div>
                   <span className="text-[8px] text-slate-500 leading-tight">
