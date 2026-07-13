@@ -39,6 +39,8 @@ import {
 import TradingChart from "./components/TradingChart";
 import { Candle, AISignal, Trade, AssetConfig, StrategyType, StrategyCatalog } from "./types";
 import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPercent, formatPrice, formatInteger } from "./lib/format";
+import { apiRequest, ApiRequestError, normalizeApiError, type ApiErrorDetails } from "./lib/apiClient";
+import { ApiErrorBanner } from "./components/ApiErrorBanner";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
