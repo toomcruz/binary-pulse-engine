@@ -6,6 +6,90 @@ import { resetRegimeState, createRegimeStateKey } from './regimeEngine';
 import crypto from 'crypto';
 
 
+
+export type EconomicStatus =
+  | "ECONOMICALLY_PROFITABLE"
+  | "ECONOMICALLY_UNPROFITABLE"
+  | "ECONOMIC_METRICS_UNAVAILABLE";
+
+export interface ReplayEconomicMetrics {
+  economicMetricsAvailable: boolean;
+  economicStatus: EconomicStatus;
+  payout: number | null;
+  breakEvenWinRate: number | null;
+  grossProfit: number | null;
+  grossLoss: number | null;
+  netProfit: number | null;
+  roiPercent: number | null;
+  expectedValuePerTrade: number | null;
+  profitable: boolean | null;
+  decidedTrades: number;
+  draws: number;
+}
+
+export function validateReplayPayout(payout: unknown): number | undefined {
+  if (payout === undefined || payout === null || payout === "") return undefined;
+  const parsed = typeof payout === "number" ? payout : Number(payout);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error("INVALID_PAYOUT");
+  }
+  return parsed;
+}
+
+export function calculateReplayEconomicMetrics(
+  results: Pick<BackstageReplaySignal, "result">[],
+  payout?: number
+): ReplayEconomicMetrics {
+  const wins = results.filter(r => r.result === "WIN").length;
+  const losses = results.filter(r => r.result === "LOSS").length;
+  const draws = results.filter(r => r.result === "DRAW").length;
+  const decidedTrades = wins + losses;
+
+  if (payout === undefined) {
+    return {
+      economicMetricsAvailable: false,
+      economicStatus: "ECONOMIC_METRICS_UNAVAILABLE",
+      payout: null,
+      breakEvenWinRate: null,
+      grossProfit: null,
+      grossLoss: null,
+      netProfit: null,
+      roiPercent: null,
+      expectedValuePerTrade: null,
+      profitable: null,
+      decidedTrades,
+      draws
+    };
+  }
+
+  // Fórmulas econômicas opcionais com stake normalizada de 1 unidade:
+  // WIN = +payout; LOSS = -1; DRAW = 0; break-even = 1 / (1 + payout);
+  // grossProfit = wins * payout; grossLoss = losses; netProfit = grossProfit - grossLoss;
+  // ROI% = netProfit / decidedTrades * 100; EV/trade = netProfit / decidedTrades.
+  const grossProfit = wins * payout;
+  const grossLoss = losses;
+  const netProfit = grossProfit - grossLoss;
+  const totalStaked = decidedTrades;
+  const roiPercent = totalStaked > 0 ? (netProfit / totalStaked) * 100 : 0;
+  const expectedValuePerTrade = totalStaked > 0 ? netProfit / totalStaked : 0;
+  const profitable = netProfit > 0;
+
+  return {
+    economicMetricsAvailable: true,
+    economicStatus: profitable ? "ECONOMICALLY_PROFITABLE" : "ECONOMICALLY_UNPROFITABLE",
+    payout,
+    breakEvenWinRate: 1 / (1 + payout),
+    grossProfit,
+    grossLoss,
+    netProfit,
+    roiPercent,
+    expectedValuePerTrade,
+    profitable,
+    decidedTrades,
+    draws
+  };
+}
+
 const STRATEGY_MAP: Record<string, string> = {
   reversion: "extremeRetrace",
   trend: "trendFollow",
