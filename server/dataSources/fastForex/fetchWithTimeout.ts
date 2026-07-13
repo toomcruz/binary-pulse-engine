@@ -17,11 +17,23 @@ export function getFastForexTimeoutMs(): number {
   return process.env.NODE_ENV === "test" || process.env.TEST_ENV === "true" ? 500 : 10_000;
 }
 
+function assertFastForexNetworkAllowed(url: string): void {
+  if (process.env.NODE_ENV !== "test" && process.env.TEST_ENV !== "true") return;
+
+  const parsedUrl = new URL(url);
+  const allowedTestHost = parsedUrl.hostname === "fastforex.test" || parsedUrl.hostname.endsWith(".test");
+  if (allowedTestHost) return;
+
+  throw new Error(`FastForex network calls are disabled during tests: ${parsedUrl.origin}`);
+}
+
 export async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
   timeoutMs = getFastForexTimeoutMs()
 ): Promise<Response> {
+  assertFastForexNetworkAllowed(url);
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   timer.unref?.();

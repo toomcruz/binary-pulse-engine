@@ -1,5 +1,5 @@
 import { MarketTick, DataSourceType } from "../dataSourceTypes";
-import { FASTFOREX_API_KEY, FASTFOREX_BASE_URL, isFastForexConfigured, normalizeSymbolToFastForex, isCryptoSymbol } from "./fastForexClient";
+import { getFastForexApiKey, getFastForexBaseUrl, isFastForexConfigured, normalizeSymbolToFastForex, isCryptoSymbol } from "./fastForexClient";
 import { fetchWithTimeout, isFastForexTimeoutError } from "./fetchWithTimeout";
 import { mapFastForexQuoteToTick } from "./fastForexMapper";
 
@@ -32,7 +32,7 @@ export async function getFastForexPrice(symbol: string): Promise<MarketTick | nu
       const parts = symbol.toUpperCase().split(/[/|-]/);
       const fromCurrency = parts[0] || "BTC";
       const toCurrency = parts[1] || "USD";
-      const url = `${FASTFOREX_BASE_URL}/fetch-one?from=${encodeURIComponent(fromCurrency)}&to=${encodeURIComponent(toCurrency)}&api_key=${FASTFOREX_API_KEY}`;
+      const url = `${getFastForexBaseUrl()}/fetch-one?from=${encodeURIComponent(fromCurrency)}&to=${encodeURIComponent(toCurrency)}&api_key=${getFastForexApiKey()}`;
 
       const response = await fetchWithTimeout(url, {
         headers: { "Accept": "application/json" }
@@ -75,7 +75,7 @@ export async function getFastForexPrice(symbol: string): Promise<MarketTick | nu
       return latestTicks[symbol] || null;
     } else {
       // Forex symbol: fetch using fx/quote (with "pairs" param instead of "pair")
-      const url = `${FASTFOREX_BASE_URL}/fx/quote?pairs=${encodeURIComponent(pairStr)}&api_key=${FASTFOREX_API_KEY}`;
+      const url = `${getFastForexBaseUrl()}/fx/quote?pairs=${encodeURIComponent(pairStr)}&api_key=${getFastForexApiKey()}`;
 
       const response = await fetchWithTimeout(url, {
         headers: { "Accept": "application/json" }
