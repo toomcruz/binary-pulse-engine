@@ -1,0 +1,6 @@
+{
+  "name": "Analisador de Sinais de Opções Binárias",
+  "description": "Análise técnica em tempo real com inteligência artificial para gerar sinais de CALL e PUT em opções binárias.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
