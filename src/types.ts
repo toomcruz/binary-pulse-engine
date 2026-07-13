@@ -263,6 +263,14 @@ export type ReplayEconomicStatus =
   | "ECONOMICALLY_UNPROFITABLE"
   | "ECONOMIC_METRICS_UNAVAILABLE";
 
+export interface BackstageReplayEconomicContext {
+  asset: string;
+  timeframe: string;
+  strategy: string;
+  precisionLevel: string;
+  payout: number | null;
+}
+
 export interface ReplayEconomicMetrics {
   economicMetricsAvailable: boolean;
   economicStatus: ReplayEconomicStatus;
@@ -275,6 +283,12 @@ export interface ReplayEconomicMetrics {
   expectedValuePerTrade: number | null;
   decidedTrades: number;
   draws: number;
+}
+
+export interface BackstageEconomicMetricsRecord {
+  context: BackstageReplayEconomicContext;
+  executedAt: number;
+  metrics: ReplayEconomicMetrics;
 }
 
 export interface CombinedValidationStatus {

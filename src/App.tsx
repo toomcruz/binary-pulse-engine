@@ -39,7 +39,7 @@ import {
 import TradingChart from "./components/TradingChart";
 import { Candle, AISignal, Trade, AssetConfig, StrategyType, StrategyCatalog } from "./types";
 import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPercent, formatPrice, formatInteger } from "./lib/format";
-import { buildBackstageReplayPayload, formatReplayEconomicMetric, translateEconomicStatus, type ReplayEconomicMetrics } from "./lib/backstageEconomics";
+import { createBackstageEconomicMetricsRecord, buildBackstageReplayEconomicContext, buildBackstageReplayPayload, getBackstageEconomicMetricsForContext, formatReplayEconomicMetric, translateEconomicStatus, type ReplayEconomicMetrics } from "./lib/backstageEconomics";
 import { apiRequest, ApiRequestError, normalizeApiError, type ApiErrorDetails } from "./lib/apiClient";
 import { ApiErrorBanner } from "./components/ApiErrorBanner";
 
@@ -90,6 +90,7 @@ export default function App() {
   
   // Strategy Choice State
   const [strategy, setStrategy] = useState<StrategyType>("reversion");
+  const [precisionLevel, setPrecisionLevel] = useState<'normal' | 'high' | 'elite'>('elite');
 
   // Dynamic Strategy Catalog State (Maintains win rate statistics per asset)
   const [strategyCatalogs, setStrategyCatalogs] = useState<Record<string, StrategyCatalog[]>>({
@@ -252,14 +253,30 @@ export default function App() {
   const [backstageStatusOverride, setBackstageStatusOverride] = useState<string | null>(null);
   const [backstageError, setBackstageError] = useState<string | null>(null);
   const [backstagePayoutPercent, setBackstagePayoutPercent] = useState("");
-  const [backstageEconomicMetrics, setBackstageEconomicMetrics] = useState<ReplayEconomicMetrics | null>(() => {
+  const [backstageEconomicMetrics, setBackstageEconomicMetrics] = useState<ReplayEconomicMetrics | null>(null);
+
+  const clearBackstageEconomicMetrics = () => {
+    setBackstageEconomicMetrics(null);
+    localStorage.removeItem("backstage_economic_metrics");
+  };
+
+  useEffect(() => {
     try {
+      const currentContext = buildBackstageReplayEconomicContext({
+        asset: selectedAsset.symbol,
+        timeframe,
+        strategy,
+        precisionLevel,
+        payoutPercentInput: backstagePayoutPercent
+      });
       const saved = localStorage.getItem("backstage_economic_metrics");
-      return saved ? JSON.parse(saved) : null;
+      const metrics = saved ? getBackstageEconomicMetricsForContext(JSON.parse(saved), currentContext) : null;
+      setBackstageEconomicMetrics(metrics);
+      if (!metrics && saved) localStorage.removeItem("backstage_economic_metrics");
     } catch {
-      return null;
+      clearBackstageEconomicMetrics();
     }
-  });
+  }, [selectedAsset.symbol, timeframe, strategy, precisionLevel, backstagePayoutPercent]);
 
   const [scannerResults, setScannerResults] = useState<any[]>(() => {
     try {
@@ -580,7 +597,6 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [serverTime, setServerTime] = useState("");
   const tickCounter = useRef(0);
-  const [precisionLevel, setPrecisionLevel] = useState<'normal' | 'high' | 'elite'>('elite');
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [syncPriceInput, setSyncPriceInput] = useState("");
   const [isLiveSyncing, setIsLiveSyncing] = useState(true);
@@ -1658,6 +1674,7 @@ export default function App() {
   const runBackstageReplayAction = async () => {
     if (isBackstageRunning) return;
 
+    clearBackstageEconomicMetrics();
     setIsBackstageRunning(true);
     setBackstageError(null);
     setBackstageStatusOverride(null);
@@ -1724,9 +1741,18 @@ export default function App() {
         decidedTrades: data.decidedTrades ?? data.signalsDecided ?? 0,
         draws: data.draws ?? 0
       };
+      const economicContext = buildBackstageReplayEconomicContext({
+        asset: selectedAsset.symbol,
+        timeframe,
+        strategy,
+        precisionLevel,
+        payoutPercentInput: backstagePayoutPercent
+      });
+      const economicRecord = createBackstageEconomicMetricsRecord(economicContext, economicMetrics);
       setBackstageEconomicMetrics(economicMetrics);
-      localStorage.setItem("backstage_economic_metrics", JSON.stringify(economicMetrics));
+      localStorage.setItem("backstage_economic_metrics", JSON.stringify(economicRecord));
     } catch (e: any) {
+      clearBackstageEconomicMetrics();
       if (e?.message === "PAYOUT_PERCENT_OUT_OF_RANGE") {
         setBackstageError("Payout da corretora deve estar entre 0% e 100%.");
         return;
@@ -2864,7 +2890,11 @@ export default function App() {
                 <div className="text-[8px] font-black uppercase tracking-wide text-emerald-300">
                   Resultado econômico
                 </div>
-                {backstageEconomicMetrics?.economicMetricsAvailable ? (
+                {isBackstageRunning ? (
+                  <div className="rounded border border-indigo-500/30 bg-indigo-500/10 p-2 text-[8.5px] leading-tight text-indigo-200">
+                    Calculando novas métricas
+                  </div>
+                ) : backstageEconomicMetrics?.economicMetricsAvailable ? (
                   <>
                     <div className="flex justify-between">
                       <span>Status econômico:</span>

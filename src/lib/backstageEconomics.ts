@@ -1,7 +1,7 @@
 import { finiteNumber, formatInteger, formatNumber, formatRatioAsPercent } from "./format";
-import type { ReplayEconomicMetrics, ReplayEconomicStatus } from "../types";
+import type { BackstageEconomicMetricsRecord, BackstageReplayEconomicContext, ReplayEconomicMetrics, ReplayEconomicStatus } from "../types";
 
-export type { ReplayEconomicMetrics, ReplayEconomicStatus };
+export type { BackstageEconomicMetricsRecord, BackstageReplayEconomicContext, ReplayEconomicMetrics, ReplayEconomicStatus };
 
 export function parsePayoutPercentInput(value: string): number | undefined {
   const trimmed = value.trim();
@@ -12,6 +12,58 @@ export function parsePayoutPercentInput(value: string): number | undefined {
     throw new Error("PAYOUT_PERCENT_OUT_OF_RANGE");
   }
   return percent / 100;
+}
+
+export function buildBackstageReplayEconomicContext(input: {
+  asset: string;
+  timeframe: string;
+  strategy: string;
+  precisionLevel: string;
+  payoutPercentInput: string;
+}): BackstageReplayEconomicContext {
+  const payout = parsePayoutPercentInput(input.payoutPercentInput);
+  return {
+    asset: input.asset,
+    timeframe: input.timeframe,
+    strategy: input.strategy,
+    precisionLevel: input.precisionLevel,
+    payout: payout ?? null
+  };
+}
+
+export function areBackstageReplayEconomicContextsEqual(
+  a: BackstageReplayEconomicContext | null | undefined,
+  b: BackstageReplayEconomicContext | null | undefined
+): boolean {
+  return !!a && !!b
+    && a.asset === b.asset
+    && a.timeframe === b.timeframe
+    && a.strategy === b.strategy
+    && a.precisionLevel === b.precisionLevel
+    && a.payout === b.payout;
+}
+
+export function createBackstageEconomicMetricsRecord(
+  context: BackstageReplayEconomicContext,
+  metrics: ReplayEconomicMetrics,
+  executedAt = Date.now()
+): BackstageEconomicMetricsRecord {
+  return {
+    context,
+    executedAt,
+    metrics
+  };
+}
+
+export function getBackstageEconomicMetricsForContext(
+  saved: unknown,
+  currentContext: BackstageReplayEconomicContext
+): ReplayEconomicMetrics | null {
+  if (!saved || typeof saved !== "object") return null;
+  const record = saved as Partial<BackstageEconomicMetricsRecord>;
+  if (!areBackstageReplayEconomicContextsEqual(record.context, currentContext)) return null;
+  if (!record.metrics || typeof record.executedAt !== "number" || !Number.isFinite(record.executedAt)) return null;
+  return record.metrics;
 }
 
 export function buildBackstageReplayPayload(input: {
