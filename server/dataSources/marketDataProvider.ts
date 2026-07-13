@@ -52,8 +52,8 @@ export function createDeterministicTestMarketDataProvider(): MarketDataProvider 
         mid: 1.0850,
         time: new Date(timestamp).toISOString(),
         timestamp,
-        source: "deterministic_fixture" as any,
-        provider: "test" as any,
+        source: "deterministic_fixture",
+        provider: "test",
         receivedAt: Date.now()
       };
     },
@@ -83,8 +83,8 @@ export function createDeterministicTestMarketDataProvider(): MarketDataProvider 
           close,
           volume: 1000 + index,
           complete: true,
-          source: "deterministic_fixture" as any,
-          provider: "test" as any,
+          source: "deterministic_fixture",
+          provider: "test",
           instrument: symbol.replace("-", "/").toUpperCase(),
           granularity: timeframe,
           priceType: "mid"
@@ -94,8 +94,8 @@ export function createDeterministicTestMarketDataProvider(): MarketDataProvider 
 
     getHealth(_symbol: string): MarketDataHealth {
       return {
-        provider: "test" as any,
-        dataSourceType: "deterministic_fixture" as any,
+        provider: "test",
+        dataSourceType: "deterministic_fixture",
         isConnected: true,
         lastRealTickAt: Date.now(),
         dataAgeMs: 0,
