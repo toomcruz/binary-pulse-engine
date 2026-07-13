@@ -139,6 +139,10 @@ async function postBackstageScanAll(baseUrl: string) {
   });
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function createNeverRespondingProvider(): MarketDataProvider {
   const deterministic = createDeterministicTestMarketDataProvider();
   return {
@@ -187,6 +191,7 @@ test("API Integration Tests", async (t) => {
   t.after(async () => {
     resetBackstageScanAllState();
     delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     setAnalyzeMarketDataProvider(null);
     stopFastForexSync();
     restoreFetch();
@@ -418,6 +423,7 @@ test("API Integration Tests", async (t) => {
 
   await t.test("9. POST /api/backstage-scan-all - normal execution", async () => {
     resetBackstageScanAllState();
+    process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "20";
     setBackstageScanAllCandlesFetcher(async () => ({
       candles: createBackstageScanCandles(),
       metrics: {
@@ -434,11 +440,13 @@ test("API Integration Tests", async (t) => {
     assert.strictEqual(response.status, 200);
     assert.ok(Array.isArray(data.setups));
     assert.strictEqual(typeof data.stats.bestStrategy, "string");
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     resetBackstageScanAllState();
   });
 
   await t.test("10. POST /api/backstage-scan-all - rejects simultaneous scans with 409", async () => {
     resetBackstageScanAllState();
+    process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "1000";
     let releaseFirstFetch!: () => void;
     let fetchCalls = 0;
     const firstFetchStarted = new Promise<void>((resolve) => {
@@ -471,10 +479,11 @@ test("API Integration Tests", async (t) => {
     releaseFirstFetch();
     const { response: firstResponse } = await firstRequest;
     assert.strictEqual(firstResponse.status, 200);
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     resetBackstageScanAllState();
   });
 
-  await t.test("11. POST /api/backstage-scan-all - releases lock after success", async () => {
+  await t.test("11. POST /api/backstage-scan-all - cooldown rate limits, retries, and accepts after waiting", async () => {
     resetBackstageScanAllState();
     setBackstageScanAllCandlesFetcher(async () => ({
       candles: createBackstageScanCandles(),
@@ -488,13 +497,26 @@ test("API Integration Tests", async (t) => {
       }
     }));
 
+    process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "1000";
+
     assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+
+    const limited = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(limited.response.status, 429);
+    assert.strictEqual(limited.data.error, "BACKSTAGE_SCAN_RATE_LIMITED");
+    assert.ok(limited.data.retryAfterMs > 0);
+    assert.ok(limited.data.retryAfterMs <= 1000);
+    assert.strictEqual(limited.response.headers.get("retry-after"), String(Math.ceil(limited.data.retryAfterMs / 1000)));
+
+    await sleep(1100);
     assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     resetBackstageScanAllState();
   });
 
   await t.test("12. POST /api/backstage-scan-all - releases lock after error", async () => {
     resetBackstageScanAllState();
+    process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "20";
     let calls = 0;
     setBackstageScanAllCandlesFetcher(async () => {
       calls += 1;
@@ -515,14 +537,19 @@ test("API Integration Tests", async (t) => {
     const failed = await postBackstageScanAll(baseUrl);
     assert.strictEqual(failed.response.status, 500);
     assert.strictEqual(failed.data.error, "TEST_BACKSTAGE_SCAN_FAILURE");
+    const rateLimited = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(rateLimited.response.status, 429);
+    await sleep(30);
     const recovered = await postBackstageScanAll(baseUrl);
     assert.strictEqual(recovered.response.status, 200);
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     resetBackstageScanAllState();
   });
 
   await t.test("13. POST /api/backstage-scan-all - timeout stops fetching additional assets", async () => {
     resetBackstageScanAllState();
     process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS = "25";
+    process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "20";
     let fetchCalls = 0;
     let resolveCancellation!: () => void;
     const cancellationFinished = new Promise<void>((resolve) => { resolveCancellation = resolve; });
@@ -552,10 +579,11 @@ test("API Integration Tests", async (t) => {
     await cancellationFinished;
 
     const callsAfterTimeout = fetchCalls;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await sleep(50);
     assert.strictEqual(fetchCalls, callsAfterTimeout);
 
     delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     setBackstageScanAllCandlesFetcher(async () => ({
       candles: createBackstageScanCandles(),
       metrics: {
@@ -574,6 +602,7 @@ test("API Integration Tests", async (t) => {
   await t.test("14. POST /api/backstage-scan-all - keeps lock until cancelled scan finishes", async () => {
     resetBackstageScanAllState();
     process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS = "25";
+    process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "20";
     let releaseCancelledWork!: () => void;
     const cancelledWorkReleased = new Promise<void>((resolve) => { releaseCancelledWork = resolve; });
 
@@ -604,6 +633,7 @@ test("API Integration Tests", async (t) => {
     assert.deepStrictEqual(stillLocked.data, { error: "BACKSTAGE_SCAN_ALREADY_RUNNING" });
 
     delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     setBackstageScanAllCandlesFetcher(async () => ({
       candles: createBackstageScanCandles(),
       metrics: {
@@ -619,6 +649,34 @@ test("API Integration Tests", async (t) => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    resetBackstageScanAllState();
+  });
+
+
+  await t.test("15. POST /api/backstage-scan-all - invalid cooldown uses safe default", async () => {
+    resetBackstageScanAllState();
+    process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "not-a-number";
+    setBackstageScanAllCandlesFetcher(async () => ({
+      candles: createBackstageScanCandles(),
+      metrics: {
+        batchesFetched: 1,
+        requestedCandles: 2000,
+        uniqueCandlesReceived: 160,
+        duplicateCandlesDiscarded: 0,
+        oldestTimestamp: null,
+        newestTimestamp: null
+      }
+    }));
+
+    assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    const limited = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(limited.response.status, 429);
+    assert.strictEqual(limited.data.error, "BACKSTAGE_SCAN_RATE_LIMITED");
+    assert.ok(limited.data.retryAfterMs > 29_000);
+    assert.ok(limited.data.retryAfterMs <= 30_000);
+    assert.strictEqual(limited.response.headers.get("retry-after"), "30");
+
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     resetBackstageScanAllState();
   });
 

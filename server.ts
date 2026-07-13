@@ -43,6 +43,7 @@ type BackstageCandlesFetcher = (
 ) => ReturnType<typeof getBackstageCandles>;
 
 let backstageScanAllRunning = false;
+let backstageScanAllNextAllowedAtMs = 0;
 let backstageCandlesFetcher: BackstageCandlesFetcher = getBackstageCandles;
 
 function setBackstageScanAllCandlesFetcher(fetcher: BackstageCandlesFetcher | null) {
@@ -51,15 +52,24 @@ function setBackstageScanAllCandlesFetcher(fetcher: BackstageCandlesFetcher | nu
 
 function resetBackstageScanAllState() {
   backstageScanAllRunning = false;
+  backstageScanAllNextAllowedAtMs = 0;
   backstageCandlesFetcher = getBackstageCandles;
 }
 
-function getBackstageScanAllTimeoutMs(): number {
-  const raw = process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
-  if (!raw) return 60_000;
+function getPositiveEnvMs(name: string, defaultMs: number): number {
+  const raw = process.env[name];
+  if (!raw) return defaultMs;
 
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultMs;
+}
+
+function getBackstageScanAllTimeoutMs(): number {
+  return getPositiveEnvMs("BACKSTAGE_SCAN_ALL_TIMEOUT_MS", 60_000);
+}
+
+function getBackstageScanAllCooldownMs(): number {
+  return getPositiveEnvMs("BACKSTAGE_SCAN_ALL_COOLDOWN_MS", 30_000);
 }
 
 function createBackstageScanAllTimeoutError(timeoutMs: number) {
@@ -760,7 +770,18 @@ app.post("/api/backstage-scan-all", async (_req, res) => {
     return res.status(409).json({ error: "BACKSTAGE_SCAN_ALREADY_RUNNING" });
   }
 
+  const now = Date.now();
+  if (now < backstageScanAllNextAllowedAtMs) {
+    const retryAfterMs = backstageScanAllNextAllowedAtMs - now;
+    res.setHeader("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+    return res.status(429).json({
+      error: "BACKSTAGE_SCAN_RATE_LIMITED",
+      retryAfterMs
+    });
+  }
+
   backstageScanAllRunning = true;
+  backstageScanAllNextAllowedAtMs = now + getBackstageScanAllCooldownMs();
   const timeoutMs = getBackstageScanAllTimeoutMs();
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
