@@ -2957,12 +2957,12 @@ export default function App() {
                   </div>
                   <div className="flex justify-between text-[9px] text-slate-300 font-mono">
                     <span>Sinais Decididos: {paperTradingStatus.currentSignals}</span>
-                    <span>Win Rate: {paperTradingStatus.winRate}%</span>
+                    <span>Win Rate: {formatPercent(paperTradingStatus.winRate)}</span>
                   </div>
                   <div className="w-full bg-slate-900 rounded-full h-1">
                     <div 
                       className="bg-amber-500 h-full"
-                      style={{ width: `${Math.min(100, (paperTradingStatus.currentSignals / paperTradingStatus.requiredSignals) * 100)}%` }}
+                      style={{ width: `${clampPercent(paperTradingStatus.requiredSignals > 0 ? (paperTradingStatus.currentSignals / paperTradingStatus.requiredSignals) * 100 : 0)}%` }}
                     />
                   </div>
                 </div>
