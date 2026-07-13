@@ -39,6 +39,8 @@ import {
 import TradingChart from "./components/TradingChart";
 import { Candle, AISignal, Trade, AssetConfig, StrategyType, StrategyCatalog } from "./types";
 import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPercent, formatPrice, formatInteger } from "./lib/format";
+import { apiRequest, ApiRequestError, normalizeApiError, type ApiErrorDetails } from "./lib/apiClient";
+import { ApiErrorBanner } from "./components/ApiErrorBanner";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
@@ -189,6 +191,9 @@ export default function App() {
   const [isContinuousAnalysis, setIsContinuousAnalysis] = useState<boolean>(true);
   const [isBackgroundAnalyzing, setIsBackgroundAnalyzing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [signalApiError, setSignalApiError] = useState<ApiErrorDetails | null>(null);
+  const [sweepGlobalError, setSweepGlobalError] = useState<ApiErrorDetails | null>(null);
+  const [sweepAssetErrors, setSweepAssetErrors] = useState<Record<string, ApiErrorDetails>>({});
 
 
   const [fastForexHealth, setFastForexHealth] = useState<any>(null);
@@ -1757,6 +1762,7 @@ export default function App() {
   const handleAnalyzeMarket = async () => {
     setIsAnalyzing(true);
     setErrorMessage(null);
+    setSignalApiError(null);
 
     // Grab latest indicator state from the last completed candle
     const closedCandle = candles.length > 1 ? candles[candles.length - 2] : candles[candles.length - 1];
@@ -1771,35 +1777,34 @@ export default function App() {
     };
 
     try {
-      // Real-time market analysis requested directly without mock trade simulation or state resolution.
-
-      const response = await fetch("/api/analyze-market", {
+      // Real-time market analysis via centralized API client — preserves
+      // endpoint/method/status/error/message/details/requestId on failure.
+      const result: any = await apiRequest("/api/analyze-market", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           asset: selectedAsset.symbol,
           timeframe,
           currentPrice,
-          candles: candles.slice(-35), // Send recent historical candles for pattern analysis
+          candles: candles.slice(-35),
           indicators: indicatorPayload,
           strategy: strategy,
-          precisionLevel, // Include the chosen precision level
-          consecutiveLossCount: consecutiveLossCountRef.current, marketContext: { executionMode: isPaperTradingActive ? "paper_trading" : "live", newsRisk: "LOW", session: "OVERLAP", minutesToHighImpactNews: 120, isSyntheticData: !!liveError, isStaleData: (Date.now() - lastRealTickAt) > 15000, dataAgeMs: Date.now() - lastRealTickAt, includesActiveCandle: true }
+          precisionLevel,
+          consecutiveLossCount: consecutiveLossCountRef.current,
+          marketContext: {
+            executionMode: isPaperTradingActive ? "paper_trading" : "live",
+            newsRisk: "LOW",
+            session: "OVERLAP",
+            minutesToHighImpactNews: 120,
+            isSyntheticData: !!liveError,
+            isStaleData: (Date.now() - lastRealTickAt) > 15000,
+            dataAgeMs: Date.now() - lastRealTickAt,
+            includesActiveCandle: true
+          }
         })
       });
 
-      if (!response.ok) {
-        let errMsg = `Servidor retornou erro: ${response.statusText}`;
-        try {
-          const errData = await response.json();
-          if (errData.message) errMsg = errData.message;
-        } catch(e) {}
-        throw new Error(errMsg);
-      }
 
-      const result = await response.json();
 
       const tdEntryPrice = result.marketContext?.executionPrice || result.marketContext?.mid;
 
@@ -1855,13 +1860,11 @@ export default function App() {
         setSignalHistory(oldHistory => [newSignal, ...oldHistory]);
       }
 
-    } catch (err: any) {
-      console.error(err);
-      if (err?.message?.includes("Failed to fetch") || err?.message?.includes("failed to fetch")) {
-        setErrorMessage("Não foi possível conectar ao servidor de inteligência artificial. O motor de análise pode estar iniciando ou o ambiente de desenvolvimento está em reinicialização rápida. Por favor, aguarde alguns instantes e clique em Analisar Ativo novamente.");
-      } else {
-        setErrorMessage(err.message || "Erro de conexão com o analisador de mercado.");
-      }
+    } catch (err: unknown) {
+      const details = normalizeApiError(err, { endpoint: "/api/analyze-market", method: "POST" });
+      console.error("[Sinal Individual]", details);
+      setSignalApiError(details);
+      setErrorMessage(details.message);
     } finally {
       setIsAnalyzing(false);
     }
@@ -1883,6 +1886,8 @@ export default function App() {
     setShowSweepModal(true);
     setSweepProgress(0);
     setSweepCurrentAsset("");
+    setSweepGlobalError(null);
+    setSweepAssetErrors({});
     
     addAutopilotLog("Varredura geral de ativos iniciada no terminal...", "info");
     
@@ -1977,7 +1982,7 @@ export default function App() {
           atr: 0.0002
         };
         
-        const response = await fetch("/api/analyze-market", {
+        const result: any = await apiRequest("/api/analyze-market", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1991,17 +1996,6 @@ export default function App() {
             consecutiveLossCount: 0
           })
         });
-        
-        if (!response.ok) {
-          let errMsg = "Erro ao processar análise do ativo";
-          try {
-            const errData = await response.json();
-            if (errData.message) errMsg = errData.message;
-          } catch(e) {}
-          throw new Error(errMsg);
-        }
-        
-        const result = await response.json();
 
         const entryPriceVal = result.marketContext?.executionPrice || result.marketContext?.mid;
         
@@ -2061,9 +2055,12 @@ export default function App() {
           playSignalSound(simulatedSignal.signal);
         }
         
-      } catch (err) {
-        console.warn(`Erro na varredura para ${asset.symbol}:`, err);
-        // Se qualquer um falhar, marcar ativo como NEUTRAL/BLOQUEADO
+      } catch (err: unknown) {
+        // Preserve full ApiErrorDetails per asset; other assets are not cancelled.
+        const details = normalizeApiError(err, { endpoint: "/api/analyze-market", method: "POST" });
+        console.warn(`[Varredura] ${asset.symbol}:`, details);
+        setSweepAssetErrors(prev => ({ ...prev, [asset.symbol]: details }));
+        // Fallback: keep asset visible as NEUTRAL/BLOQUEADO so scan proceeds.
         const fallbackPrice = asset.basePrice;
         results[i] = {
           ...results[i],
@@ -3126,7 +3123,13 @@ export default function App() {
                 </div>
               </div>
 
-              {errorMessage && (
+              {signalApiError && (
+                <ApiErrorBanner
+                  error={signalApiError}
+                  onDismiss={() => { setSignalApiError(null); setErrorMessage(null); }}
+                />
+              )}
+              {!signalApiError && errorMessage && (
                 <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-[11px] flex gap-2 animate-shake">
                   <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
                   <span>{errorMessage}</span>
@@ -4369,6 +4372,23 @@ export default function App() {
               </div>
             </div>
 
+            {sweepGlobalError && (
+              <div className="mb-4">
+                <ApiErrorBanner error={sweepGlobalError} onDismiss={() => setSweepGlobalError(null)} />
+              </div>
+            )}
+
+            {Object.keys(sweepAssetErrors).length > 0 && (
+              <div className="mb-4 flex flex-col gap-2">
+                {Object.entries(sweepAssetErrors).map(([symbol, detail]) => (
+                  <div key={symbol}>
+                    <div className="text-[10px] uppercase tracking-wider text-rose-300 font-bold mb-1">{symbol}</div>
+                    <ApiErrorBanner error={detail} />
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Progress Section */}
             {isSweepScanning && (
               <div className="mb-4 bg-slate-950/60 border border-slate-800 p-4 rounded-xl flex flex-col gap-3">
@@ -4457,13 +4477,13 @@ export default function App() {
                           {isCall && (
                             <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-xl text-xs font-black">
                               <TrendingUp size={12} className="animate-bounce" />
-                              <span>CALL • {formatPercent(result.signal?.technicalScore)}</span>
+                              <span>CALL • Qualidade técnica: {formatScore(result.signal?.technicalScore)}/100</span>
                             </div>
                           )}
                           {isPut && (
                             <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/30 text-rose-400 px-3 py-1 rounded-xl text-xs font-black">
                               <TrendingDown size={12} className="animate-bounce" />
-                              <span>PUT • {formatPercent(result.signal?.technicalScore)}</span>
+                              <span>PUT • Qualidade técnica: {formatScore(result.signal?.technicalScore)}/100</span>
                             </div>
                           )}
                         </div>
