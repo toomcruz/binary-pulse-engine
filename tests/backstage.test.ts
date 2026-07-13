@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { runBackstageReplay } from '../server/backstageReplay';
+import { getExpectedExpiryMs, runBackstageReplay } from '../server/backstageReplay';
 import { resetCalibrationSession, calibrateProbability, registerTradeResult } from '../server/calibration';
 import { evaluateOrderBlock } from '../server/triggers/orderBlock';
 import { evaluateLiquiditySweep } from '../server/triggers/liquiditySweep';
@@ -16,6 +16,37 @@ function makeM1(i: number, open: number, high: number, low: number, close: numbe
         ema9: close, sma21: close, atr: 0.001,
         instrument: "EUR_USD", granularity: "M1", priceType: "mid"
     };
+}
+
+function makeReplayCandles(length = 300): Candle[] {
+    let price = 1.1000;
+    return Array.from({length}, (_, i) => {
+          let open = price;
+          let change = 0;
+          if (i < 50) {
+            change = 0.0050;
+          } else if (i < 100) {
+            change = -0.0050;
+          } else {
+            change = 0.0004 + 0.0005 * Math.sin(i * 0.15);
+          }
+          let close = price + change;
+          let noise = (Math.sin(i * 1.5) + Math.cos(i * 2.3)) * 0.00005;
+          let high = Math.max(open, close) + 0.0001 + Math.abs(noise);
+          let low = Math.min(open, close) - 0.0001 - Math.abs(noise);
+          price = close + noise;
+
+          return makeM1(i, open, high, low, close);
+    });
+}
+
+function toM5(candles: Candle[]): Candle[] {
+    return candles.map((c, i) => ({
+        ...c,
+        timestamp: 1700000100000 + i * 300000,
+        time: new Date(1700000100000 + i * 300000).toISOString(),
+        granularity: "M5"
+    }));
 }
 
 test('SMC Triggers', (t) => {
@@ -113,25 +144,7 @@ test('Calibration and Backstage Replay Deadlock / Freeze', (t) => {
 
 test('Dataset Hashing', (t) => {
     // Generate trending candles that actually trigger a signal
-    let price = 1.1000;
-    const candles1 = Array.from({length: 300}, (_, i) => {
-          let open = price;
-          let change = 0;
-          if (i < 50) {
-            change = 0.0050;
-          } else if (i < 100) {
-            change = -0.0050;
-          } else {
-            change = 0.0004 + 0.0005 * Math.sin(i * 0.15);
-          }
-          let close = price + change;
-          let noise = (Math.sin(i * 1.5) + Math.cos(i * 2.3)) * 0.00005;
-          let high = Math.max(open, close) + 0.0001 + Math.abs(noise);
-          let low = Math.min(open, close) - 0.0001 - Math.abs(noise);
-          price = close + noise;
-          
-          return makeM1(i, open, high, low, close);
-    });
+    const candles1 = makeReplayCandles();
 
     const candles2 = JSON.parse(JSON.stringify(candles1));
     candles2[50].close = candles2[50].close + 0.0010; // change one candle
@@ -147,4 +160,111 @@ test('Dataset Hashing', (t) => {
     
     // Verify that at least 1 CALL or PUT was generated
     assert.ok(res1.results.length > 0, "O dataset deve gerar pelo menos 1 sinal decidido para validar o determinismo completo.");
+});
+
+test('Backstage replay uses next candle open for entry and next candle close for expiry', () => {
+    const candles = makeReplayCandles();
+    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles });
+
+    assert.ok(replay.results.length > 0, "dataset must generate validation signals");
+    const signal = replay.results[0];
+    const signalIndex = candles.findIndex(c => c.time === signal.timestamp);
+    const nextCandle = candles[signalIndex + 1];
+
+    assert.ok(nextCandle, "signal must have a next candle");
+    assert.strictEqual(signal.entryPrice, nextCandle.open);
+    assert.strictEqual(signal.exitPrice, nextCandle.close);
+    assert.strictEqual(signal.entryTimestamp, nextCandle.time);
+    assert.strictEqual(signal.expiryTimestamp, nextCandle.time);
+});
+
+test('Backstage replay rejects M1 expiry gaps without calculating validation result', () => {
+    const candles = makeReplayCandles();
+    const baseline = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles });
+    const firstSignal = baseline.results[0];
+    assert.ok(firstSignal, "baseline must generate at least one validation signal");
+
+    const signalIndex = candles.findIndex(c => c.time === firstSignal.timestamp);
+    const gappedCandles = candles.map(c => ({ ...c }));
+    const gappedEntry = gappedCandles[signalIndex + 1];
+    gappedEntry.timestamp += 60000;
+    gappedEntry.time = new Date(gappedEntry.timestamp).toISOString();
+
+    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles: gappedCandles });
+
+    assert.ok(replay.invalidExpiryGaps >= 1);
+    assert.ok(replay.invalidExpiryGapEvents.some(e =>
+        e.reason === "INVALID_EXPIRY_GAP" &&
+        e.expectedMs === getExpectedExpiryMs("M1") &&
+        e.actualMs !== getExpectedExpiryMs("M1")
+    ));
+    assert.ok(!replay.results.some(r => r.timestamp === firstSignal.timestamp && r.result));
+});
+
+test('Backstage replay rejects M5 expiry gaps without calculating validation result', () => {
+    const candles = toM5(makeReplayCandles());
+    const baseline = runBackstageReplay({ asset: "EUR/USD", timeframe: "M5", strategy: "all", candles });
+    const firstSignal = baseline.results[0];
+    assert.ok(firstSignal, "baseline must generate at least one validation signal");
+
+    const signalIndex = candles.findIndex(c => c.time === firstSignal.timestamp);
+    const gappedCandles = candles.map(c => ({ ...c }));
+    const gappedEntry = gappedCandles[signalIndex + 1];
+    gappedEntry.timestamp += 300000;
+    gappedEntry.time = new Date(gappedEntry.timestamp).toISOString();
+
+    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe: "M5", strategy: "all", candles: gappedCandles });
+
+    assert.ok(replay.invalidExpiryGaps >= 1);
+    assert.ok(replay.invalidExpiryGapEvents.some(e =>
+        e.reason === "INVALID_EXPIRY_GAP" &&
+        e.expectedMs === getExpectedExpiryMs("M5") &&
+        e.actualMs !== getExpectedExpiryMs("M5")
+    ));
+    assert.ok(!replay.results.some(r => r.timestamp === firstSignal.timestamp && r.result));
+});
+
+test('Future candle changes do not alter earlier historical replay decisions', () => {
+    const candles = makeReplayCandles(360);
+    const baseline = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles });
+    assert.ok(baseline.results.length > 0, "baseline must generate validation signals");
+
+    const cutoffIndex = 280;
+    const cutoffTimestamp = candles[cutoffIndex].timestamp!;
+    const modified = candles.map((c, i) => i > cutoffIndex ? ({
+        ...c,
+        open: c.open + 0.05,
+        high: c.high + 0.05,
+        low: c.low + 0.05,
+        close: c.close + 0.05
+    }) : ({ ...c }));
+
+    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles: modified });
+    const beforeCutoff = (r: any) => new Date(r.timestamp).getTime() < cutoffTimestamp;
+    const normalize = (r: any) => ({
+        timestamp: r.timestamp,
+        strategy: r.strategy,
+        signal: r.signal,
+        entryPrice: r.entryPrice,
+        exitPrice: r.exitPrice,
+        result: r.result
+    });
+
+    assert.deepStrictEqual(
+        baseline.results.filter(beforeCutoff).map(normalize),
+        replay.results.filter(beforeCutoff).map(normalize)
+    );
+});
+
+test('Validation results do not increase calibration sampleSize', () => {
+    const replay = runBackstageReplay({ asset: "EUR/USD", timeframe: "M1", strategy: "all", candles: makeReplayCandles(360) });
+
+    assert.ok(replay.results.length > 1, "dataset must generate multiple validation signals");
+    assert.ok(replay.results.every(r => (r.sampleSize ?? 0) <= replay.trainSignals));
+
+    const sampleSizes = replay.results
+        .map(r => r.sampleSize)
+        .filter((sampleSize): sampleSize is number => typeof sampleSize === "number");
+
+    assert.deepStrictEqual(sampleSizes, [...sampleSizes].sort((a, b) => a - b));
 });

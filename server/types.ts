@@ -142,11 +142,14 @@ export interface BackstageReplaySignal {
   technicalScore: number;
   calibratedProbability: number | null;
   calibrationAvailable: boolean;
+  sampleSize?: number;
   reliabilityScore?: number;
   calibrationSource?: string;
   regime?: string;
   entryPrice: number;
+  entryTimestamp?: string;
   exitPrice?: number;
+  expiryTimestamp?: string;
   result?: "WIN" | "LOSS" | "DRAW";
   reason: string[];
 }

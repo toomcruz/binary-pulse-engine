@@ -424,7 +424,7 @@ app.post("/api/backstage-replay", async (req, res) => {
        throw new Error("MARKET_CANDLES_UNAVAILABLE");
     }
 
-    const { results, trainSignals, datasetHash } = runBackstageReplay({
+    const { results, trainSignals, invalidExpiryGaps, invalidExpiryGapEvents, datasetHash } = runBackstageReplay({
        asset: assetStr,
        timeframe,
        candles: candles,
@@ -466,6 +466,8 @@ app.post("/api/backstage-replay", async (req, res) => {
       signalsDecided,
       targetSignals,
       trainSignals,
+      invalidExpiryGaps,
+      invalidExpiryGapEvents,
       wins,
       losses,
       draws,
