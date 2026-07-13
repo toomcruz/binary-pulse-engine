@@ -35,6 +35,36 @@ import { resetCalibrationSession } from "./server/calibration";
 
 const app = express();
 
+const DEFAULT_PORT = 3000;
+const SERVER_START_TIME_MS = Date.now();
+
+function resolveHttpPort(rawPort = process.env.PORT): number {
+  if (rawPort === undefined || rawPort === "") {
+    return DEFAULT_PORT;
+  }
+
+  if (!/^\d+$/.test(rawPort)) {
+    throw new Error(`Invalid PORT: "${rawPort}". PORT must be an integer between 1 and 65535.`);
+  }
+
+  const port = Number(rawPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT: "${rawPort}". PORT must be an integer between 1 and 65535.`);
+  }
+
+  return port;
+}
+
+function createHealthPayload() {
+  return {
+    ok: true,
+    status: "UP",
+    environment: process.env.NODE_ENV || "development",
+    uptimeSeconds: Math.floor((Date.now() - SERVER_START_TIME_MS) / 1000)
+  };
+}
+
+
 type BackstageCandlesFetcher = (
   symbol: string,
   timeframe: "M1" | "M5",
@@ -172,8 +202,6 @@ async function withAnalyzeTimeout<T>(operation: Promise<T>, timeoutMs?: number):
 // Initialize OANDA Streaming
 initMarketDataService();
 
-const PORT = 3000;
-
 function isClosedCandle(
   candle: Candle,
   timeframe: "M1" | "M5",
@@ -202,6 +230,10 @@ function isCryptoSymbol(symbol: string): boolean {
 }
 
 app.use(express.json());
+
+app.get("/api/health", (_req, res) => {
+  res.status(200).json(createHealthPayload());
+});
 
 // OANDA Endpoints
 app.get("/api/market/status", (req, res) => {
@@ -1746,7 +1778,7 @@ function selectedAssetDecimals(symbol: string): number {
 
 // Start Vite dev server integration
 
-async function startServer() {
+async function startServer(port = resolveHttpPort()) {
 
   // Fallback for API routes that are not found
   app.use("/api", (_req, res) => {
@@ -1767,12 +1799,21 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
+  const server = app.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on port ${port}`);
   });
+
+  return server;
 }
-if (process.env.TEST_ENV !== "true") {
-  startServer();
+function shouldAutoStartServer(): boolean {
+  return process.env.TEST_ENV !== "true" && process.env.NODE_ENV !== "test" && !process.env.NODE_TEST_CONTEXT;
 }
 
-export { app, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState };
+if (shouldAutoStartServer()) {
+  startServer().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}
+
+export { app, resolveHttpPort, startServer, shouldAutoStartServer, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState };

@@ -26,6 +26,7 @@ Nunca commite `.env`: ele pode conter chaves de API, tokens e identificadores de
 | Variavel | Uso | Obrigatoriedade | Exemplo seguro |
 | --- | --- | --- | --- |
 | `NODE_ENV` | Define o ambiente de execucao (`development`, `production` ou `test`). | Opcional | `development` |
+| `PORT` | Porta HTTP usada pelo servidor Express. Quando omitida, usa `3000` para desenvolvimento local; valores invalidos interrompem a inicializacao. | Opcional | `3000` |
 | `TEST_ENV` | Ativa comportamento de teste, como timeouts menores. | Apenas testes | `false` |
 | `MARKET_DATA_PROVIDER` | Seleciona o provedor de dados (`fastforex`, `twelvedata` ou `massive`). | Opcional | `fastforex` |
 | `FASTFOREX_API_KEY` | Chave para consultar dados reais da FastForex. | Obrigatoria quando usar FastForex em dados reais | Deixe vazio no exemplo; preencha com a chave FastForex real apenas no `.env` local/producao. |
@@ -80,16 +81,33 @@ As variaveis abaixo sao usadas por rotas/integracoes OANDA.
 2. Copie `.env.example` para `.env` e ajuste as variaveis necessarias:
    `cp .env.example .env`
 3. Para uso local com dados reais, defina no minimo o provedor escolhido e a chave correspondente (por exemplo, `MARKET_DATA_PROVIDER=fastforex` e `FASTFOREX_API_KEY`).
-4. Inicie o projeto:
+4. Opcionalmente ajuste `PORT` no `.env`; se omitido, o servidor usa `3000`.
+5. Inicie o projeto:
    `npm run dev`
 
 ## Configuracao de producao
 
 - Defina `NODE_ENV=production` no ambiente do servidor.
+- Defina `PORT` quando o provedor de deploy exigir uma porta especifica. O valor deve ser um numero inteiro entre `1` e `65535`; valores invalidos fazem o servidor falhar na inicializacao com uma mensagem clara, sem fallback silencioso.
 - Configure as variaveis diretamente no provedor de deploy/CI/CD ou no gerenciador de segredos da infraestrutura.
 - Nao envie `.env` para o repositorio e nao coloque chaves reais em `.env.example`.
 - Preencha somente as credenciais do provedor de dados usado em producao; deixe as demais credenciais vazias para evitar chamadas com valores falsos.
 - Ajuste `FASTFOREX_TIMEOUT_MS`, `BACKSTAGE_SCAN_ALL_TIMEOUT_MS` e `BACKSTAGE_SCAN_ALL_COOLDOWN_MS` conforme os limites operacionais do ambiente.
+
+### Health check
+
+A rota `GET /api/health` e um health check simples da propria aplicacao. Ela nao consulta FastForex, Gemini, OANDA, Twelve Data, Massive/Polygon ou qualquer outro provedor externo, e nao expõe variaveis, chaves, tokens ou detalhes internos.
+
+Resposta esperada com HTTP `200`:
+
+```json
+{
+  "ok": true,
+  "status": "UP",
+  "environment": "production",
+  "uptimeSeconds": 42
+}
+```
 
 ## Scripts
 
