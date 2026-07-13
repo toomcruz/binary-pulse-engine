@@ -205,6 +205,7 @@ export async function getFastForexCandles(
         let batch = mapFastForexTimeSeriesToCandles(symbol, data.results, "M1");
         if (batch.length === 0) break;
         
+        const previousCount = allM1Candles.length;
         allM1Candles = [...batch, ...allM1Candles];
         
         // Remove duplicates just in case
@@ -212,8 +213,8 @@ export async function getFastForexCandles(
         for (const c of allM1Candles) {
           unique.set(c.timestamp, c);
         }
-        const previousCount = allM1Candles.length;
         allM1Candles = Array.from(unique.values()).sort((a, b) => a.timestamp - b.timestamp);
+        const addedCandles = allM1Candles.length - previousCount;
 
         // Update currentEnd to fetch older candles next time
         // FastForex end expects ISO format without milliseconds (e.g. 2026-07-09T18:00:00Z)
@@ -221,7 +222,7 @@ export async function getFastForexCandles(
         const dateStr = new Date(oldestCandle.timestamp - 1).toISOString();
         currentEnd = dateStr.replace(/\.\d{3}Z$/, 'Z');
         
-        if (allM1Candles.length <= previousCount) {
+        if (addedCandles <= 0) {
            break;
         }
 
