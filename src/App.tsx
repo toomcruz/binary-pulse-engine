@@ -237,7 +237,7 @@ export default function App() {
       } catch (e) {}
     };
     fetchFastForexHealth();
-    const interval = setInterval(fetchFastForexHealth, 1000);
+    const interval = setInterval(fetchFastForexHealth, 10000);
     return () => clearInterval(interval);
   }, [selectedAsset]);
 
@@ -896,6 +896,7 @@ export default function App() {
   const precisionLevelRef = useRef(precisionLevel);
   const currentPriceRef = useRef(currentPrice);
   const activeSignalRef = useRef(activeSignal);
+  const autopilotScanTimeoutRef = useRef<number | null>(null);
   const lastSignalCandleRef = useRef<{ [key: string]: string }>({});
   const consecutiveLossCountRef = useRef(0);
 
@@ -1527,7 +1528,11 @@ export default function App() {
       if (isAnalyzing) return; // Skip if manually scanning
       
       setIsAutopilotScanning(true);
-      setTimeout(() => setIsAutopilotScanning(false), 2000);
+      if (autopilotScanTimeoutRef.current) clearTimeout(autopilotScanTimeoutRef.current);
+      autopilotScanTimeoutRef.current = window.setTimeout(() => {
+        setIsAutopilotScanning(false);
+        autopilotScanTimeoutRef.current = null;
+      }, 2000);
 
       const asset = selectedAssetRef.current;
       const tf = timeframeRef.current;
@@ -1667,7 +1672,13 @@ export default function App() {
       }
     }, 10000);
 
-    return () => clearInterval(autoScanInterval);
+    return () => {
+      clearInterval(autoScanInterval);
+      if (autopilotScanTimeoutRef.current) {
+        clearTimeout(autopilotScanTimeoutRef.current);
+        autopilotScanTimeoutRef.current = null;
+      }
+    };
   }, [autoPilot, isAnalyzing]);
 
   // Request analysis from our server endpoint
@@ -1782,6 +1793,7 @@ export default function App() {
     a.href = url;
     a.download = `backstage-report-${selectedAsset.symbol}-${new Date().getTime()}.json`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   const runBackstageScannerAction = async () => {
@@ -1799,7 +1811,16 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error("Erro ao executar Backstage Scanner Geral");
+        let payload: any = null;
+        try { payload = await response.json(); } catch {}
+        if (response.status === 409) throw new Error("Já existe uma varredura geral em andamento. Aguarde a execução atual terminar.");
+        if (response.status === 429) {
+          const retryAfterMs = Number(payload?.retryAfterMs || 0);
+          const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+          throw new Error(`Cooldown ativo. Tente novamente em aproximadamente ${seconds}s.`);
+        }
+        if (response.status === 504) throw new Error("A varredura geral excedeu o tempo limite. Tente novamente após o cooldown.");
+        throw new Error(payload?.message || payload?.error || "Erro ao executar Backstage Scanner Geral");
       }
 
       const data = await response.json();
