@@ -4231,10 +4231,10 @@ export default function App() {
                         
   <div className="flex flex-col items-end text-right ml-2 space-y-1">
     <div className="text-[10px] text-gray-400">
-      <span className="font-medium text-gray-300">Qualidade técnica:</span> {signal.technicalScore}/100
+      <span className="font-medium text-gray-300">Qualidade técnica:</span> {formatScore(signal.technicalScore)}/100
     </div>
     <div className="text-[10px] text-gray-400">
-      <span className="font-medium text-gray-300">Probabilidade estatística:</span> {signal.calibrationAvailable && signal.calibratedProbability !== null ? `${signal.calibratedProbability}%` : 'indisponível'}
+      <span className="font-medium text-gray-300">Probabilidade estatística:</span> {signal.calibrationAvailable && signal.calibratedProbability !== null ? formatPercent(signal.calibratedProbability) : 'indisponível'}
     </div>
   </div>
   
