@@ -2903,7 +2903,7 @@ export default function App() {
                           <span>Regime: <strong className="text-slate-300 uppercase">{item.dominantRegime}</strong></span>
                         </div>
                         <div className="flex justify-between items-center text-[8.5px] mt-0.5 pt-0.5 border-t border-slate-800/30">
-                          <span>Assertividade: <strong className={(item.winRate !== null && item.winRate >= 58) ? "text-emerald-400" : "text-rose-400"}>{item.winRate !== null ? item.winRate.toFixed(1) + "%" : "N/A"}</strong></span>
+                          <span>Assertividade: <strong className={(item.winRate !== null && item.winRate >= 58) ? "text-emerald-400" : "text-rose-400"}>{item.winRate !== null ? formatPercent(item.winRate, 1) : "N/A"}</strong></span>
                           <span>Sinais: <strong className="text-slate-200">{item.totalDecided}</strong></span>
                           <span>Max Loss: <strong className="text-slate-200">{item.maxConsecutiveLosses}</strong></span>
                         </div>
