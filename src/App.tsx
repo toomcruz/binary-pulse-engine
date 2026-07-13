@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import TradingChart from "./components/TradingChart";
 import { Candle, AISignal, Trade, AssetConfig, StrategyType, StrategyCatalog } from "./types";
+import { formatPercent, finiteNumber, clampPercent } from "./lib/format";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
@@ -2122,12 +2123,20 @@ export default function App() {
     
     // Average confidence of generated directional signals
     const directionalSignals = list.filter(s => s.signal !== "NEUTRAL");
-    const sumConfidence = directionalSignals.reduce((acc, s) => acc + (s.technicalScore ?? 0), 0);
-    const avgConfidence = directionalSignals.length > 0 
-      ? Math.round(sumConfidence / directionalSignals.length) 
-      : (list.length > 0 ? Math.round(list.reduce((acc, s) => acc + (s.technicalScore ?? 0), 0) / list.length) : 0);
+    const scoredDirectional = directionalSignals
+      .map(s => finiteNumber(s.technicalScore))
+      .filter((n): n is number => n !== null);
+    const scoredAll = list
+      .map(s => finiteNumber(s.technicalScore))
+      .filter((n): n is number => n !== null);
+    const avgConfidence: number | null =
+      scoredDirectional.length > 0
+        ? Math.round(scoredDirectional.reduce((a, b) => a + b, 0) / scoredDirectional.length)
+        : scoredAll.length > 0
+          ? Math.round(scoredAll.reduce((a, b) => a + b, 0) / scoredAll.length)
+          : null;
 
-    return { 
+    return {
       total,
       callsCount,
       putsCount,
@@ -2279,7 +2288,7 @@ export default function App() {
             <div>
               <div className="text-[8px] text-slate-500 uppercase tracking-wider font-semibold">Confiança Média</div>
               <div className="text-xs font-bold text-purple-400 font-mono">
-                {stats.avgConfidence}%
+                {formatPercent(stats.avgConfidence)}
               </div>
             </div>
           </div>
@@ -2651,18 +2660,18 @@ export default function App() {
                 <span className="text-[9px] text-slate-400 uppercase tracking-wide">Confiança Média</span>
                 <div className="flex items-baseline gap-1.5 mt-1.5">
                   <span className={`text-xl font-extrabold font-mono ${
-                    stats.avgConfidence >= 90 ? "text-emerald-400" : stats.avgConfidence >= 75 ? "text-amber-400" : "text-rose-400"
+                    (stats.avgConfidence ?? 0) >= 90 ? "text-emerald-400" : (stats.avgConfidence ?? 0) >= 75 ? "text-amber-400" : "text-rose-400"
                   }`}>
-                    {stats.avgConfidence}%
+                    {formatPercent(stats.avgConfidence)}
                   </span>
                   <span className="text-[9px] text-slate-500 font-medium">filtrado</span>
                 </div>
                 <div className="w-full bg-slate-800/50 h-1.5 rounded-full overflow-hidden mt-2">
                   <div 
                     className={`h-full transition-all duration-500 ${
-                      stats.avgConfidence >= 90 ? "bg-emerald-500" : stats.avgConfidence >= 75 ? "bg-amber-500" : "bg-rose-500"
+                      (stats.avgConfidence ?? 0) >= 90 ? "bg-emerald-500" : (stats.avgConfidence ?? 0) >= 75 ? "bg-amber-500" : "bg-rose-500"
                     }`}
-                    style={{ width: `${stats.avgConfidence}%` }}
+                    style={{ width: `${clampPercent(stats.avgConfidence)}%` }}
                   />
                 </div>
               </div>
@@ -4248,7 +4257,7 @@ export default function App() {
               </div>
               <div>
                 <span className="text-[8px] text-slate-500 uppercase block mb-0.5">Confiança Med.</span>
-                <span className="text-xs font-bold text-purple-400 font-mono">{stats.avgConfidence}%</span>
+                <span className="text-xs font-bold text-purple-400 font-mono">{formatPercent(stats.avgConfidence)}</span>
               </div>
             </div>
           </div>

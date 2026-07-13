@@ -48,17 +48,30 @@ export function getFastForexHealth(instrument?: string): MarketDataHealth {
     }
   }
 
+  const hasEverReceivedTick = lastTickAt !== null;
+  const connectionStatus: MarketDataHealth["connectionStatus"] = !hasEverReceivedTick
+    ? "UNAVAILABLE"
+    : isStaleData
+      ? "STALE"
+      : "CONNECTED";
+
+  const errorMessage = !hasEverReceivedTick
+    ? "FastForex feed has not delivered a tick yet (polling pending or upstream unavailable)."
+    : isStaleData
+      ? "FastForex data is stale (last tick older than 45s)."
+      : undefined;
+
   return {
     provider: "fastforex",
     dataSourceType: "fastforex_rest",
-    isConnected: !isStaleData,
+    isConnected: hasEverReceivedTick && !isStaleData,
     lastRealTickAt: lastTickAt,
     dataAgeMs,
     isStaleData,
     isSyntheticData: false,
-    connectionStatus: isStaleData ? "STALE" : "CONNECTED",
+    connectionStatus,
     feedMode: "rest_polling",
-    error: isStaleData ? "FastForex data is stale or unavailable." : undefined,
+    error: errorMessage,
     configured: true
   };
 }
