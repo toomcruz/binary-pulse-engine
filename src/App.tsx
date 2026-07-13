@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import TradingChart from "./components/TradingChart";
 import { Candle, AISignal, Trade, AssetConfig, StrategyType, StrategyCatalog } from "./types";
-import { formatPercent, finiteNumber, clampPercent } from "./lib/format";
+import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPercent, formatPrice, formatInteger } from "./lib/format";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
