@@ -166,7 +166,7 @@ export function runBackstageReplay({
     const entryTimestamp = entryCandle.time
       ? new Date(entryCandle.time).toISOString()
       : new Date(entryCandle.timestamp).toISOString();
-    const expiryTimestamp = entryTimestamp;
+    const expiryTimestamp = new Date(entryCandle.timestamp + expectedExpiryMs).toISOString();
 
     let result: "WIN" | "LOSS" | "DRAW" = "DRAW";
     if (decision.signal === "CALL") {
