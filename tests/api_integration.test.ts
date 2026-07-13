@@ -177,7 +177,7 @@ test("API Integration Tests", async (t) => {
   setupMockFetch();
 
   // Import app dynamically after setting environment variables
-  const { app, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState } = await import('../server');
+  const { app, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState, setBackstageScanAllClock } = await import('../server');
   const { stopFastForexSync } = await import('../server/dataSources/marketDataService');
   setAnalyzeMarketDataProvider(createDeterministicTestMarketDataProvider());
   
@@ -223,6 +223,18 @@ test("API Integration Tests", async (t) => {
     assert.strictEqual(successData.ok, true);
     assert.strictEqual(successData.timeframe, "M5");
     assert.ok(Array.isArray(successData.candles));
+
+    for (const badLimit of ["NaN", "Infinity", "10.5", "abc"]) {
+      const res = await fetch(`${baseUrl}/api/market/candles?symbol=EUR/USD&timeframe=M1&limit=${badLimit}`);
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual((await res.json()).error, "INVALID_LIMIT");
+    }
+    const badTimeframe = await fetch(`${baseUrl}/api/market/candles?symbol=EUR/USD&timeframe=M15&limit=50`);
+    assert.strictEqual(badTimeframe.status, 400);
+    assert.strictEqual((await badTimeframe.json()).error, "INVALID_TIMEFRAME");
+    const badAsset = await fetch(`${baseUrl}/api/market/candles?symbol=FAKE/USD&timeframe=M1&limit=50`);
+    assert.strictEqual(badAsset.status, 400);
+    assert.strictEqual((await badAsset.json()).error, "INVALID_ASSET");
   });
 
   await t.test("3. POST /api/backstage-replay - input validation", async () => {
@@ -365,6 +377,61 @@ test("API Integration Tests", async (t) => {
     assert.strictEqual(errData.error, "INVALID_STRATEGY_MODE");
   });
 
+
+  await t.test("6. POST /api/analyze-market - invalid asset/timeframe do not call provider", async () => {
+    let providerCalls = 0;
+    const failProvider: MarketDataProvider = {
+      id: "test",
+      async getPrice() { providerCalls += 1; throw new Error("PROVIDER_MUST_NOT_BE_CALLED"); },
+      async getCandles() { providerCalls += 1; throw new Error("PROVIDER_MUST_NOT_BE_CALLED"); },
+      getHealth() { providerCalls += 1; throw new Error("PROVIDER_MUST_NOT_BE_CALLED"); }
+    };
+    setAnalyzeMarketDataProvider(failProvider);
+
+    const basePayload = {
+      asset: "EUR/USD",
+      timeframe: "M1",
+      currentPrice: 1.085,
+      strategy: "reversion",
+      marketContext: { executionMode: "live" }
+    };
+
+    const invalidAsset = await fetch(`${baseUrl}/api/analyze-market`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...basePayload, asset: "FAKE/USD" })
+    });
+    assert.strictEqual(invalidAsset.status, 400);
+    assert.strictEqual((await invalidAsset.json()).error, "INVALID_ASSET");
+
+    const invalidTimeframe = await fetch(`${baseUrl}/api/analyze-market`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...basePayload, timeframe: "M15" })
+    });
+    assert.strictEqual(invalidTimeframe.status, 400);
+    assert.strictEqual((await invalidTimeframe.json()).error, "INVALID_TIMEFRAME");
+    assert.strictEqual(providerCalls, 0);
+    setAnalyzeMarketDataProvider(createDeterministicTestMarketDataProvider());
+  });
+
+  await t.test("7. GET /api/market/status - production hides sensitive metadata", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const response = await fetch(`${baseUrl}/api/market/status?symbol=EUR/USD`);
+      assert.strictEqual(response.status, 200);
+      const data = await response.json();
+      assert.strictEqual(data.hasApiKey, undefined);
+      assert.strictEqual(data.environment, undefined);
+      assert.strictEqual(data.symbols, undefined);
+      assert.strictEqual(data.provider, "fastforex");
+      assert.strictEqual(typeof data.connected, "boolean");
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   await t.test("6. POST /api/analyze-market - provider timeout returns 504", async () => {
     setAnalyzeMarketDataProvider(createNeverRespondingProvider());
     const { response, data, durationMs } = await fetchJson(`${baseUrl}/api/analyze-market`, {
@@ -498,6 +565,8 @@ test("API Integration Tests", async (t) => {
     }));
 
     process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "1000";
+    let nowMs = 10_000;
+    setBackstageScanAllClock(() => nowMs);
 
     assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
 
@@ -508,7 +577,7 @@ test("API Integration Tests", async (t) => {
     assert.ok(limited.data.retryAfterMs <= 1000);
     assert.strictEqual(limited.response.headers.get("retry-after"), String(Math.ceil(limited.data.retryAfterMs / 1000)));
 
-    await sleep(1100);
+    nowMs += 1000;
     assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
     delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     resetBackstageScanAllState();
@@ -517,6 +586,8 @@ test("API Integration Tests", async (t) => {
   await t.test("12. POST /api/backstage-scan-all - releases lock after error", async () => {
     resetBackstageScanAllState();
     process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "20";
+    let nowMs = 20_000;
+    setBackstageScanAllClock(() => nowMs);
     let calls = 0;
     setBackstageScanAllCandlesFetcher(async () => {
       calls += 1;
@@ -539,7 +610,7 @@ test("API Integration Tests", async (t) => {
     assert.strictEqual(failed.data.error, "TEST_BACKSTAGE_SCAN_FAILURE");
     const rateLimited = await postBackstageScanAll(baseUrl);
     assert.strictEqual(rateLimited.response.status, 429);
-    await sleep(30);
+    nowMs += 20;
     const recovered = await postBackstageScanAll(baseUrl);
     assert.strictEqual(recovered.response.status, 200);
     delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
@@ -550,6 +621,8 @@ test("API Integration Tests", async (t) => {
     resetBackstageScanAllState();
     process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS = "25";
     process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "20";
+    let nowMs = 30_000;
+    setBackstageScanAllClock(() => nowMs);
     let fetchCalls = 0;
     let resolveCancellation!: () => void;
     const cancellationFinished = new Promise<void>((resolve) => { resolveCancellation = resolve; });
@@ -579,11 +652,12 @@ test("API Integration Tests", async (t) => {
     await cancellationFinished;
 
     const callsAfterTimeout = fetchCalls;
-    await sleep(50);
+    const cooldownAfterTimeout = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(cooldownAfterTimeout.response.status, 429);
     assert.strictEqual(fetchCalls, callsAfterTimeout);
+    nowMs += 20;
 
     delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
-    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     setBackstageScanAllCandlesFetcher(async () => ({
       candles: createBackstageScanCandles(),
       metrics: {
@@ -603,6 +677,8 @@ test("API Integration Tests", async (t) => {
     resetBackstageScanAllState();
     process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS = "25";
     process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS = "20";
+    let nowMs = 40_000;
+    setBackstageScanAllClock(() => nowMs);
     let releaseCancelledWork!: () => void;
     const cancelledWorkReleased = new Promise<void>((resolve) => { releaseCancelledWork = resolve; });
 
@@ -633,7 +709,6 @@ test("API Integration Tests", async (t) => {
     assert.deepStrictEqual(stillLocked.data, { error: "BACKSTAGE_SCAN_ALREADY_RUNNING" });
 
     delete process.env.BACKSTAGE_SCAN_ALL_TIMEOUT_MS;
-    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     setBackstageScanAllCandlesFetcher(async () => ({
       candles: createBackstageScanCandles(),
       metrics: {
@@ -647,8 +722,12 @@ test("API Integration Tests", async (t) => {
     }));
     releaseCancelledWork();
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setImmediate(resolve));
+    const cooldown = await postBackstageScanAll(baseUrl);
+    assert.strictEqual(cooldown.response.status, 429);
+    nowMs += 20;
     assert.strictEqual((await postBackstageScanAll(baseUrl)).response.status, 200);
+    delete process.env.BACKSTAGE_SCAN_ALL_COOLDOWN_MS;
     resetBackstageScanAllState();
   });
 

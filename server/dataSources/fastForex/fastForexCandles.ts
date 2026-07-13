@@ -331,9 +331,11 @@ export async function getBackstageCandles(
         metrics.oldestTimestamp = oldestTs;
         metrics.newestTimestamp = sortedTimestamps[sortedTimestamps.length - 1];
         currentEndTime = oldestTs - 1;
-      } catch(e) {
-        if (isFastForexAbortError(e) || isFastForexTimeoutError(e)) throw e;
-        break;
+      } catch(error) {
+        if (isFastForexAbortError(error) || isFastForexTimeoutError(error)) {
+          throw error;
+        }
+        throw Object.assign(new Error("BACKSTAGE_CANDLES_PAGE_FAILED"), { cause: error });
       }
     }
     metrics.uniqueCandlesReceived = allM1.size;
@@ -368,12 +370,12 @@ export async function getBackstageCandles(
     const response = await fetchWithTimeout(url, { headers: { "Accept": "application/json" }, signal });
     if (!response.ok) {
        console.warn(`[FastForex] API Error ${response.status}`);
-       break; // Stop fetching on error, return what we have
+       throw new Error("BACKSTAGE_CANDLES_PAGE_FAILED");
     }
 
     const data = (await response.json()) as any;
     if (!data.results || !Array.isArray(data.results)) {
-       break;
+       throw new Error("BACKSTAGE_CANDLES_PAGE_FAILED");
     }
 
     const batch = mapFastForexTimeSeriesToCandles(symbol, data.results, "M1");

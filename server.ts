@@ -38,6 +38,41 @@ const app = express();
 const DEFAULT_PORT = 3000;
 const SERVER_START_TIME_MS = Date.now();
 
+const SUPPORTED_OPERATIONAL_ASSETS = new Set([
+  "EUR/USD", "GBP/USD", "USD/JPY", "EUR/JPY", "GBP/JPY", "AUD/USD", "USD/CAD", "EUR/GBP",
+  "BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "BNB/USD", "USD/BRL"
+]);
+const SUPPORTED_TIMEFRAMES = new Set(["M1", "M5"]);
+
+function normalizeAssetSymbol(input: unknown): string {
+  const raw = typeof input === "object" && input !== null ? (input as any).symbol : input;
+  return String(raw || "").trim().toUpperCase().replace(/_/g, "/");
+}
+
+function isSupportedOperationalAsset(symbol: string): boolean {
+  return SUPPORTED_OPERATIONAL_ASSETS.has(symbol);
+}
+
+function normalizeAnalyzeTimeframe(input: unknown): "M1" | "M5" | null {
+  const raw = String(input || "").trim().toUpperCase();
+  if (raw === "M1" || raw === "1MIN") return "M1";
+  if (raw === "M5" || raw === "5MIN") return "M5";
+  return null;
+}
+
+function parseCandlesLimit(input: unknown): number | null {
+  const raw = input === undefined ? "100" : String(input).trim();
+  if (!/^\d+$/.test(raw)) return null;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed)) return null;
+  return parsed;
+}
+
+let backstageScanAllNowMs = () => Date.now();
+function setBackstageScanAllClock(clock: (() => number) | null) {
+  backstageScanAllNowMs = clock ?? (() => Date.now());
+}
+
 function resolveHttpPort(rawPort = process.env.PORT): number {
   if (rawPort === undefined || rawPort === "") {
     return DEFAULT_PORT;
@@ -84,6 +119,7 @@ function resetBackstageScanAllState() {
   backstageScanAllRunning = false;
   backstageScanAllNextAllowedAtMs = 0;
   backstageCandlesFetcher = getBackstageCandles;
+  setBackstageScanAllClock(null);
 }
 
 function getPositiveEnvMs(name: string, defaultMs: number): number {
@@ -268,13 +304,10 @@ app.get("/api/market/status", (req, res) => {
     const symbol = req.query.symbol ? String(req.query.symbol) : undefined;
     const health = getMarketDataHealth(symbol);
     
-    res.json({
+    const publicPayload: any = {
       configured: true,
-      hasApiKey: true,
-      environment: process.env.NODE_ENV === "production" ? "production" : (process.env.NODE_ENV === "test" ? "test" : "preview"),
       mocked: false,
       provider: "fastforex",
-      symbols: [...symbolsForex, ...symbolsCrypto],
       connected: health.isConnected,
       status: health.connectionStatus,
       dataSourceType: "fastforex_rest",
@@ -282,7 +315,12 @@ app.get("/api/market/status", (req, res) => {
       dataAgeMs: health.dataAgeMs,
       isStaleData: health.isStaleData,
       error: health.error || null
-    });
+    };
+    if (process.env.NODE_ENV !== "production") {
+      publicPayload.environment = process.env.NODE_ENV === "test" ? "test" : "preview";
+      publicPayload.symbols = [...symbolsForex, ...symbolsCrypto];
+    }
+    res.json(publicPayload);
     return;
   }
   
@@ -326,27 +364,25 @@ app.get("/api/market/latest-price", async (req, res) => {
 });
 
 app.get("/api/market/candles", async (req, res) => {
-  const symbol = String(req.query.symbol || "");
-
-  const requestedTimeframe = String(
-    req.query.timeframe ||
-    req.query.interval ||
-    "M1"
-  );
-
-  const timeframe = requestedTimeframe === "M5" ? "M5" : "M1";
-
-  const requestedLimit = Number(req.query.limit || 100);
-
-  const limit = Math.min(2000, Math.max(20, requestedLimit));
+  const symbol = normalizeAssetSymbol(req.query.symbol);
+  const requestedTimeframe = String(req.query.timeframe || req.query.interval || "M1").trim().toUpperCase();
+  const timeframe = SUPPORTED_TIMEFRAMES.has(requestedTimeframe) ? requestedTimeframe as "M1" | "M5" : null;
+  const requestedLimit = parseCandlesLimit(req.query.limit);
 
   if (!symbol) {
-    return res.status(400).json({
-      ok: false,
-      error: "MISSING_SYMBOL"
-    });
+    return res.status(400).json({ ok: false, error: "MISSING_SYMBOL" });
+  }
+  if (!isSupportedOperationalAsset(symbol)) {
+    return res.status(400).json({ ok: false, error: "INVALID_ASSET" });
+  }
+  if (!timeframe) {
+    return res.status(400).json({ ok: false, error: "INVALID_TIMEFRAME" });
+  }
+  if (requestedLimit === null) {
+    return res.status(400).json({ ok: false, error: "INVALID_LIMIT" });
   }
 
+  const limit = Math.min(2000, Math.max(20, requestedLimit));
   const candles = await getFastForexCandles(symbol, timeframe, limit);
 
   if (!candles?.length) {
@@ -802,7 +838,7 @@ app.post("/api/backstage-scan-all", async (_req, res) => {
     return res.status(409).json({ error: "BACKSTAGE_SCAN_ALREADY_RUNNING" });
   }
 
-  const now = Date.now();
+  const now = backstageScanAllNowMs();
   if (now < backstageScanAllNextAllowedAtMs) {
     const retryAfterMs = backstageScanAllNextAllowedAtMs - now;
     res.setHeader("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
@@ -813,7 +849,6 @@ app.post("/api/backstage-scan-all", async (_req, res) => {
   }
 
   backstageScanAllRunning = true;
-  backstageScanAllNextAllowedAtMs = now + getBackstageScanAllCooldownMs();
   const timeoutMs = getBackstageScanAllTimeoutMs();
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
@@ -857,6 +892,7 @@ app.post("/api/backstage-scan-all", async (_req, res) => {
     }
   } finally {
     if (timer) clearTimeout(timer);
+    backstageScanAllNextAllowedAtMs = backstageScanAllNowMs() + getBackstageScanAllCooldownMs();
     backstageScanAllRunning = false;
   }
 });
@@ -899,13 +935,21 @@ app.post("/api/analyze-market", async (req, res) => {
     }
     marketContext.strategyMode = selectedStrategy;
 
-    const symbolStr = typeof asset === "object" && asset !== null ? (asset as any).symbol || "" : String(asset);
-    const granularity = (timeframe === "1min" || timeframe === "M1") ? "M1" : "M5";
+    const symbolStr = normalizeAssetSymbol(asset);
+    const granularity = normalizeAnalyzeTimeframe(timeframe);
 
     if (!symbolStr || !timeframe || !currentPrice) {
       tracePhase("request_failed");
       res.status(400).json({ error: "Missing required parameters.", requestId });
       return;
+    }
+    if (!isSupportedOperationalAsset(symbolStr)) {
+      tracePhase("request_failed");
+      return res.status(400).json({ error: "INVALID_ASSET", requestId });
+    }
+    if (!granularity) {
+      tracePhase("request_failed");
+      return res.status(400).json({ error: "INVALID_TIMEFRAME", requestId });
     }
 
     tracePhase("payload_validated");
@@ -1816,4 +1860,4 @@ if (shouldAutoStartServer()) {
   });
 }
 
-export { app, resolveHttpPort, startServer, shouldAutoStartServer, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState };
+export { app, resolveHttpPort, startServer, shouldAutoStartServer, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState, setBackstageScanAllClock };

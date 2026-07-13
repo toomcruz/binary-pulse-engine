@@ -42,6 +42,7 @@ import { formatPercent, finiteNumber, clampPercent, formatScore, formatRatioAsPe
 import { createBackstageEconomicMetricsRecord, buildBackstageReplayEconomicContext, buildBackstageReplayPayload, getBackstageEconomicMetricsForContext, formatReplayEconomicMetric, translateEconomicStatus, type ReplayEconomicMetrics } from "./lib/backstageEconomics";
 import { apiRequest, ApiRequestError, normalizeApiError, type ApiErrorDetails } from "./lib/apiClient";
 import { ApiErrorBanner } from "./components/ApiErrorBanner";
+import { formatBackstageScannerError } from "./lib/backstageScanner";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
@@ -237,7 +238,7 @@ export default function App() {
       } catch (e) {}
     };
     fetchFastForexHealth();
-    const interval = setInterval(fetchFastForexHealth, 1000);
+    const interval = setInterval(fetchFastForexHealth, 10000);
     return () => clearInterval(interval);
   }, [selectedAsset]);
 
@@ -896,6 +897,7 @@ export default function App() {
   const precisionLevelRef = useRef(precisionLevel);
   const currentPriceRef = useRef(currentPrice);
   const activeSignalRef = useRef(activeSignal);
+  const autopilotScanTimeoutRef = useRef<number | null>(null);
   const lastSignalCandleRef = useRef<{ [key: string]: string }>({});
   const consecutiveLossCountRef = useRef(0);
 
@@ -1527,7 +1529,11 @@ export default function App() {
       if (isAnalyzing) return; // Skip if manually scanning
       
       setIsAutopilotScanning(true);
-      setTimeout(() => setIsAutopilotScanning(false), 2000);
+      if (autopilotScanTimeoutRef.current) clearTimeout(autopilotScanTimeoutRef.current);
+      autopilotScanTimeoutRef.current = window.setTimeout(() => {
+        setIsAutopilotScanning(false);
+        autopilotScanTimeoutRef.current = null;
+      }, 2000);
 
       const asset = selectedAssetRef.current;
       const tf = timeframeRef.current;
@@ -1667,7 +1673,13 @@ export default function App() {
       }
     }, 10000);
 
-    return () => clearInterval(autoScanInterval);
+    return () => {
+      clearInterval(autoScanInterval);
+      if (autopilotScanTimeoutRef.current) {
+        clearTimeout(autopilotScanTimeoutRef.current);
+        autopilotScanTimeoutRef.current = null;
+      }
+    };
   }, [autoPilot, isAnalyzing]);
 
   // Request analysis from our server endpoint
@@ -1782,6 +1794,7 @@ export default function App() {
     a.href = url;
     a.download = `backstage-report-${selectedAsset.symbol}-${new Date().getTime()}.json`;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const runBackstageScannerAction = async () => {
@@ -1799,7 +1812,9 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error("Erro ao executar Backstage Scanner Geral");
+        let payload: any = null;
+        try { payload = await response.json(); } catch {}
+        throw new Error(formatBackstageScannerError(response.status, payload));
       }
 
       const data = await response.json();

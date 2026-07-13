@@ -30,7 +30,10 @@ function assertFastForexNetworkAllowed(url: string): void {
   if (process.env.NODE_ENV !== "test" && process.env.TEST_ENV !== "true") return;
 
   const parsedUrl = new URL(url);
-  const allowedTestHost = parsedUrl.hostname === "fastforex.test" || parsedUrl.hostname.endsWith(".test");
+  const allowedTestHost =
+    parsedUrl.hostname === "fastforex.test" ||
+    parsedUrl.hostname.endsWith(".test") ||
+    parsedUrl.hostname === "api.binance.us";
   if (allowedTestHost) return;
 
   throw new Error(`FastForex network calls are disabled during tests: ${parsedUrl.origin}`);
@@ -78,6 +81,9 @@ export async function fetchWithTimeout(
       throw new FastForexRequestTimeoutError();
     }
     if ((error as Error).name === "AbortError") {
+      if (externalSignal?.aborted) {
+        throw new FastForexRequestAbortError();
+      }
       throw new FastForexRequestTimeoutError();
     }
     throw error;
