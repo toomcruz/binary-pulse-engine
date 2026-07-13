@@ -2123,12 +2123,20 @@ export default function App() {
     
     // Average confidence of generated directional signals
     const directionalSignals = list.filter(s => s.signal !== "NEUTRAL");
-    const sumConfidence = directionalSignals.reduce((acc, s) => acc + (s.technicalScore ?? 0), 0);
-    const avgConfidence = directionalSignals.length > 0 
-      ? Math.round(sumConfidence / directionalSignals.length) 
-      : (list.length > 0 ? Math.round(list.reduce((acc, s) => acc + (s.technicalScore ?? 0), 0) / list.length) : 0);
+    const scoredDirectional = directionalSignals
+      .map(s => finiteNumber(s.technicalScore))
+      .filter((n): n is number => n !== null);
+    const scoredAll = list
+      .map(s => finiteNumber(s.technicalScore))
+      .filter((n): n is number => n !== null);
+    const avgConfidence: number | null =
+      scoredDirectional.length > 0
+        ? Math.round(scoredDirectional.reduce((a, b) => a + b, 0) / scoredDirectional.length)
+        : scoredAll.length > 0
+          ? Math.round(scoredAll.reduce((a, b) => a + b, 0) / scoredAll.length)
+          : null;
 
-    return { 
+    return {
       total,
       callsCount,
       putsCount,
