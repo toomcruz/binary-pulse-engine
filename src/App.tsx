@@ -43,6 +43,7 @@ import { createBackstageEconomicMetricsRecord, buildBackstageReplayEconomicConte
 import { apiRequest, ApiRequestError, normalizeApiError, type ApiErrorDetails } from "./lib/apiClient";
 import { ApiErrorBanner } from "./components/ApiErrorBanner";
 import { formatBackstageScannerError } from "./lib/backstageScanner";
+import { isFeedOperational, isValidPrice } from "./lib/feedGate";
 
 // Configurations for assets
 const ASSETS: AssetConfig[] = [
@@ -203,43 +204,63 @@ export default function App() {
 
   const [currentSpread, setCurrentSpread] = useState<number | null>(null);
 
-  const isFastForexOperational = fastForexHealth?.configured === true && 
-                             fastForexHealth?.connected === true && 
-                             fastForexHealth?.lastRealTickAt && 
-                             fastForexHealth?.dataAgeMs !== null && 
-                             fastForexHealth?.dataAgeMs <= 10000;
+  const isFastForexOperational = isFeedOperational(fastForexHealth);
 
-  
   useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
     const fetchFastForexHealth = async () => {
+      const symbolParam = selectedAsset.symbol.replace("_", "/");
+
       try {
-        const res = await fetch('/api/market/status');
-        if (res.ok) {
-          const data = await res.json();
-          setFastForexHealth(data);
+        const statusResponse = await fetch(
+          `/api/market/status?symbol=${encodeURIComponent(symbolParam)}`,
+          { signal: controller.signal }
+        );
+
+        if (!statusResponse.ok) return;
+
+        const healthData = await statusResponse.json();
+        if (cancelled) return;
+        setFastForexHealth(healthData);
+
+        if (!isFeedOperational(healthData)) return;
+
+        const tickResponse = await fetch(
+          `/api/market/latest-price?symbol=${encodeURIComponent(symbolParam)}`,
+          { signal: controller.signal }
+        );
+
+        if (!tickResponse.ok) return;
+
+        const tickData = await tickResponse.json();
+        if (cancelled) return;
+
+        if (tickData.ok && isValidPrice(tickData.price)) {
+          setCurrentPrice(tickData.price);
         }
-        
-        // Also fetch latest tick for spread using FastForex
-        if (selectedAsset) {
-          const symbolParam = selectedAsset.symbol.replace("_", "/");
-          const tickRes = await fetch(`/api/market/latest-price?symbol=${symbolParam}`);
-          if (tickRes.ok) {
-            const tickData = await tickRes.json();
-            if (tickData.ok && tickData.ask && tickData.bid) {
-               const spread = tickData.ask - tickData.bid;
-               let pipSize = 0.0001;
-               if (selectedAsset.symbol.includes("JPY")) pipSize = 0.01;
-               setCurrentSpread(spread / pipSize);
-            } else {
-               setCurrentSpread(null);
-            }
-          }
+
+        if (isValidPrice(tickData.ask) && isValidPrice(tickData.bid)) {
+          const spread = tickData.ask - tickData.bid;
+          const pipSize = selectedAsset.symbol.includes("JPY") ? 0.01 : 0.0001;
+          setCurrentSpread(spread / pipSize);
         }
-      } catch (e) {}
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.warn("[MarketData] Failed to refresh frontend feed state", error);
+        }
+      }
     };
-    fetchFastForexHealth();
-    const interval = setInterval(fetchFastForexHealth, 10000);
-    return () => clearInterval(interval);
+
+    void fetchFastForexHealth();
+    const interval = window.setInterval(fetchFastForexHealth, 10000);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearInterval(interval);
+    };
   }, [selectedAsset]);
 
   const [backstageReplaySignals, setBackstageReplaySignals] = useState<any[]>(() => {
