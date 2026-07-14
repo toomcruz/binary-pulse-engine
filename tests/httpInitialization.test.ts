@@ -9,7 +9,7 @@ process.env.OANDA_ACCOUNT_ID = "super-secret-account";
 import test from "node:test";
 import assert from "node:assert";
 import http from "node:http";
-import { app, resolveHttpPort } from "../server";
+import { app, resolveHttpPort, resolvePortFromArgv } from "../server";
 import { stopFastForexSync } from "../server/dataSources/marketDataService";
 
 test.after(() => {
@@ -30,6 +30,30 @@ test("HTTP initialization rejects invalid PORT values", () => {
   for (const invalidPort of ["0", "65536", "3000.5", "abc", " 3000", "-1"]) {
     assert.throws(
       () => resolveHttpPort(invalidPort),
+      /Invalid PORT: .* PORT must be an integer between 1 and 65535\./
+    );
+  }
+});
+
+test("HTTP initialization reads a separated --port CLI argument", () => {
+  assert.strictEqual(resolvePortFromArgv(["--port", "8080"]), "8080");
+  assert.strictEqual(resolvePortFromArgv(["-p", "8080"]), "8080");
+});
+
+test("HTTP initialization reads an inline --port CLI argument", () => {
+  assert.strictEqual(resolvePortFromArgv(["--port=8080"]), "8080");
+});
+
+test("HTTP initialization falls back to PORT when CLI port is absent", () => {
+  const cliPort = resolvePortFromArgv(["--inspect"]);
+  assert.strictEqual(cliPort, undefined);
+  assert.strictEqual(resolveHttpPort(cliPort ?? "4173"), 4173);
+});
+
+test("HTTP initialization rejects invalid CLI port values", () => {
+  for (const argv of [["--port", "not-a-number"], ["--port=99999"]]) {
+    assert.throws(
+      () => resolveHttpPort(resolvePortFromArgv(argv)),
       /Invalid PORT: .* PORT must be an integer between 1 and 65535\./
     );
   }
