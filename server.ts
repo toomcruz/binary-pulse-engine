@@ -90,6 +90,22 @@ function resolveHttpPort(rawPort = process.env.PORT): number {
   return port;
 }
 
+function resolvePortFromArgv(argv: string[] = process.argv.slice(2)): string | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+
+    if (argument === "--port" || argument === "-p") {
+      return argv[index + 1];
+    }
+
+    if (argument.startsWith("--port=")) {
+      return argument.slice("--port=".length);
+    }
+  }
+
+  return undefined;
+}
+
 function createHealthPayload() {
   return {
     ok: true,
@@ -1854,10 +1870,11 @@ function shouldAutoStartServer(): boolean {
 }
 
 if (shouldAutoStartServer()) {
-  startServer().catch((error) => {
+  const cliPort = resolvePortFromArgv();
+  startServer(resolveHttpPort(cliPort ?? process.env.PORT)).catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   });
 }
 
-export { app, resolveHttpPort, startServer, shouldAutoStartServer, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState, setBackstageScanAllClock };
+export { app, resolveHttpPort, resolvePortFromArgv, startServer, shouldAutoStartServer, setAnalyzeMarketDataProvider, setBackstageScanAllCandlesFetcher, resetBackstageScanAllState, setBackstageScanAllClock };
