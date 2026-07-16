@@ -38,6 +38,36 @@ const app = express();
 const DEFAULT_PORT = 3000;
 const SERVER_START_TIME_MS = Date.now();
 
+const PROJECT_ARCHIVE_EXCLUDED_DIRS = new Set([".git", "node_modules", "dist", ".vite", "coverage"]);
+const PROJECT_ARCHIVE_EXCLUDED_FILES = new Set([".env", ".env.local", ".env.production", ".env.development"]);
+
+function shouldSkipProjectArchiveEntry(entryName: string): boolean {
+  if (PROJECT_ARCHIVE_EXCLUDED_DIRS.has(entryName)) return true;
+  if (PROJECT_ARCHIVE_EXCLUDED_FILES.has(entryName)) return true;
+  if (entryName.endsWith(".log")) return true;
+  return false;
+}
+
+function addDirectoryToProjectArchive(zip: AdmZip, directoryPath: string, archivePrefix = ""): void {
+  const entries = fs.readdirSync(directoryPath, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (shouldSkipProjectArchiveEntry(entry.name)) continue;
+
+    const fullPath = path.join(directoryPath, entry.name);
+    const nestedArchivePrefix = archivePrefix ? `${archivePrefix}/${entry.name}` : entry.name;
+
+    if (entry.isDirectory()) {
+      addDirectoryToProjectArchive(zip, fullPath, nestedArchivePrefix);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      zip.addLocalFile(fullPath, archivePrefix);
+    }
+  }
+}
+
 const SUPPORTED_OPERATIONAL_ASSETS = new Set([
   "EUR/USD", "GBP/USD", "USD/JPY", "EUR/JPY", "GBP/JPY", "AUD/USD", "USD/CAD", "EUR/GBP",
   "BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "BNB/USD", "USD/BRL"
@@ -285,6 +315,26 @@ app.use(express.json());
 
 app.get("/api/health", (_req, res) => {
   res.status(200).json(createHealthPayload());
+});
+
+app.get("/api/download-project", (_req, res) => {
+  try {
+    const zip = new AdmZip();
+    addDirectoryToProjectArchive(zip, process.cwd());
+    const archive = zip.toBuffer();
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", 'attachment; filename="projeto-completo-robo.zip"');
+    res.setHeader("Content-Length", String(archive.length));
+    return res.status(200).send(archive);
+  } catch (error) {
+    console.error("[Download Project] Failed to generate archive:", error);
+    return res.status(500).json({
+      ok: false,
+      error: "PROJECT_ARCHIVE_FAILED",
+      message: "Não foi possível gerar o arquivo do projeto"
+    });
+  }
 });
 
 // OANDA Endpoints

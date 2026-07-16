@@ -12,6 +12,7 @@ process.env.GEMINI_API_KEY = "";
 import test from 'node:test';
 import assert from 'node:assert';
 import http from 'http';
+import AdmZip from 'adm-zip';
 import { MarketDataProvider, createDeterministicTestMarketDataProvider } from '../server/dataSources/marketDataProvider';
 
 const originalFetch = global.fetch;
@@ -196,6 +197,24 @@ test("API Integration Tests", async (t) => {
     stopFastForexSync();
     restoreFetch();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  await t.test("0. GET /api/download-project - returns a valid project archive", async () => {
+    const response = await fetch(`${baseUrl}/api/download-project`);
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.headers.get("content-type"), "application/zip");
+    assert.match(response.headers.get("content-disposition") || "", /projeto-completo-robo\.zip/);
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    assert.ok(buffer.length > 0, "archive should not be empty");
+
+    const zip = new AdmZip(buffer);
+    const entryNames = zip.getEntries().map((entry) => entry.entryName);
+    assert.ok(entryNames.includes("package.json"), "archive should include project files");
+    assert.ok(entryNames.includes("src/App.tsx"), "archive should include application source");
+    assert.ok(!entryNames.some((name) => name.startsWith("node_modules/")), "archive must exclude node_modules");
+    assert.ok(!entryNames.includes(".env"), "archive must exclude local environment secrets");
   });
 
   await t.test("1. GET /api/market/latest-price - Success and Missing Symbol", async () => {
